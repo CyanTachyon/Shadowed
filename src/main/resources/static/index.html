@@ -49,8 +49,7 @@
                             <div class="menu-item" onclick="toggleTheme()">Switch Theme</div>
                             <div class="menu-item logout" onclick="logout()">Logout</div>
                         </div>
-                        <input type="file" id="avatar-upload" accept="image/*" style="display: none;"
-                            onchange="uploadAvatar()">
+                        <input type="file" id="avatar-upload" accept="image/*" style="display: none;" onchange="uploadAvatar()">
                     </div>
 
                     <div class="header-right" style="position: relative;">
@@ -91,6 +90,7 @@
                 </div>
                 <div class="input-area">
                     <label for="message-input"></label><input type="text" id="message-input" placeholder="Type a message..." disabled onkeypress="handleKeyPress(event)">
+                    <button class="button" onclick="sendImage()" style="width: auto; height: 100%; margin-top: 0;">+</button>
                     <button class="button" onclick="sendMessage()" style="width: auto; height: 100%; margin-top: 0;">Send</button>
                 </div>
             </div>

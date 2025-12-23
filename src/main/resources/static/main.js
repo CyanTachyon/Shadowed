@@ -13,7 +13,11 @@ function showToast(message, type = 'info', onClick = null)
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.innerText = message;
-    if (onClick) toast.onclick = onClick;
+    if (onClick)
+    {
+        toast.onclick = onClick;
+        toast.style.cursor = 'pointer';
+    }
     container.appendChild(toast);
     setTimeout(() =>
     {
@@ -288,6 +292,7 @@ function selectChat(chat)
 {
     closeChatSettings();
     currentChatId = chat.chatId;
+    currentChatMessages = [];
     const chatWithEl = document.getElementById('chat-with');
     const displayName = chat.name || `Chat ${currentChatId}`;
     const isGroup = !chat.isPrivate;
@@ -315,7 +320,7 @@ function selectChat(chat)
     if (selectedItem) selectedItem.classList.add('active');
 
     // 清空聊天消息，显示loading
-    document.getElementById('messages-container').innerHTML = '<div style="padding: 20px; text-align: center; color: var(--secondary-color);">Loading messages...</div>';
+    document.getElementById('messages-container').innerHTML = '<div style="padding: 20px; text-align: center; color: var(--secondary-color);" id="placeholder">Loading messages...</div>';
 
     // Reset pagination
     window.currentChatOffset = 0;
@@ -386,14 +391,22 @@ async function renderMessages(insertAtTop)
     const container = document.getElementById('messages-container');
     const oldScrollHeight = container.scrollHeight;
     const oldScrollTop = container.scrollTop;
-    container.innerHTML = '';
     container.onscroll = null;
-    currentChatMessages = Array.from(new Set(currentChatMessages)).sort((a, b) => b.id - a.id).filter((msg => msg.chatId === currentChatId));
-    for (const msg of currentChatMessages) await appendChatMessage(msg, container);
+    container.querySelector("#placeholder")?.remove()
+    currentChatMessages = Array.from(new Set(currentChatMessages)).sort((a, b) => a.id - b.id).filter((msg => msg.chatId === currentChatId));
+    const needRender = currentChatMessages.map((it, index) => [it, currentChatMessages[index + 1]]).filter(([msg, nextMsg]) => document.getElementById(`message-${msg.id}`) === null).reverse();
+    for (const msg of needRender)
+    {
+        const ele = await createMessageElement(msg[0]);
+        if (msg[1]) container.insertBefore(ele, document.getElementById(`message-${msg[1].id}`));
+        else container.appendChild(ele);
+    }
     const newScrollHeight = container.scrollHeight;
     if (insertAtTop) container.scrollTop = newScrollHeight - oldScrollHeight + oldScrollTop;
-    else container.scrollTop = oldScrollTop;
-    if (currentChatMessages.length === 0) container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--secondary-color);">No messages yet. Start the conversation!</div>';
+    else if (oldScrollTop > oldScrollHeight - 5 - container.clientHeight) container.scrollTop = container.scrollHeight;
+    else container.scrollTop = oldScrollTop
+    console.log(container.scrollTop, container.scrollHeight);
+    if (currentChatMessages.length === 0) container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--secondary-color);" id="placeholder">No messages yet. Start the conversation!</div>';
     container.onscroll = handleContainerScroll;
 }
 
@@ -449,18 +462,13 @@ function connectWebSocket()
     };
 }
 
-async function appendChatMessage(msg, container)
-{
-    const div = await createMessageElement(msg);
-    container.appendChild(div);
-}
-
 async function createMessageElement(msg)
 {
     const div = document.createElement('div');
     const myId = (typeof currentUser.id === 'object' && currentUser.id.value) ? currentUser.id.value : currentUser.id;
     const isMe = msg.senderId === myId;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
+    div.id = `message-${msg.id}`;
     if (!isMe && window.chats)
     {
         const chat = window.chats.find(c => c.chatId === msg.chatId);
@@ -483,24 +491,43 @@ async function createMessageElement(msg)
             div.style.marginLeft = '40px';
         }
     }
-    let content;
+
+
+    const contentDiv = document.createElement('div');
+
     try
     {
         let chatKey = chatKeys[msg.chatId];
-        if (chatKey) content = await decryptMessageSymmetric(msg.content, chatKey);
-        else content = "[Key Not Available]";
+        if (!chatKey) contentDiv.innerText = "[Key Not Available]";
+        else if (msg.type.toLowerCase() === 'text') contentDiv.innerText = await decryptMessageString(msg.content, chatKey);
+        else if (msg.type.toLowerCase() === 'image')
+        {
+            contentDiv.innerText = "[Loading Image...]";
+            fetch(`/api/file/${msg.id}`).then(res => res.text()).then(async base64 =>
+            {
+                const imageData = await decryptMessageBytes(base64, chatKey);
+                const blob = new Blob([imageData]);
+                const url = URL.createObjectURL(blob);
+                const img = document.createElement('img');
+                img.src = url;
+                img.style.maxWidth = '100%';
+                img.style.maxHeight = '300px';
+                contentDiv.innerHTML = '';
+                contentDiv.appendChild(img);
+            });
+        }
     }
     catch (e)
     {
-        content = "[Decryption Error]";
+        contentDiv.innerText = "[Decryption Error]";
+        console.error("Message decryption error", e);
     }
 
-    const contentDiv = document.createElement('div');
-    contentDiv.innerText = content;
     div.appendChild(contentDiv);
     const meta = document.createElement('div');
     meta.style.fontSize = "0.7em";
-    meta.style.textAlign = "right";
+    if (isMe) meta.style.textAlign = "right";
+    else meta.style.textAlign = "left";
     meta.style.marginTop = "4px";
     meta.style.opacity = "0.7";
     let statusText = "";
@@ -554,7 +581,7 @@ async function addFriend()
 function createGroupModal()
 {
     document.getElementById('create-group-modal').style.display = 'flex';
-    document.getElementById('group-members-list').innerHTML = '<div style="padding: 10px; text-align: center; color: var(--secondary-color);">Loading friends...</div>';
+    document.getElementById('group-members-list').innerHTML = '<div style="padding: 10px; text-align: center; color: var(--secondary-color);" id="placeholder">Loading friends...</div>';
     document
     socket.send("get_friends");
 }
@@ -846,10 +873,11 @@ async function sendMessage()
 
     try
     {
-        const encrypted = await encryptMessageSymmetric(text, chatKey);
+        const encrypted = await encryptMessageString(text, chatKey);
         const packet = {
             chatId: currentChatId,
-            message: encrypted
+            message: encrypted,
+            type: 'text',
         };
         socket.send(`send_message\n${JSON.stringify(packet)}`);
         input.value = '';
@@ -859,6 +887,53 @@ async function sendMessage()
         console.error("Encrypt failed", e);
         showToast("Failed to encrypt message: " + e.message, "error");
     }
+}
+
+async function sendImage()
+{
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.onchange = async () =>
+    {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) =>
+        {
+            const arrayBuffer = e.target.result;
+            const chatKey = chatKeys[currentChatId];
+            if (!chatKey)
+            {
+                showToast("Chat key not loaded!", "error");
+                return;
+            }
+
+            try
+            {
+                const encrypted = await encryptMessageBytes(arrayBuffer, chatKey);
+                await fetch("/api/send_file", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'text/plain',
+                        'X-Auth-Token': currentUserAuthToken,
+                        'X-Chat-Id': currentChatId,
+                        'X-Message-Type': 'image',
+                        'X-Auth-User': currentUser.username
+                    },
+                    body: encrypted
+                })
+            }
+            catch (e)
+            {
+                console.error("Encrypt failed", e);
+                showToast("Failed to encrypt image: " + e.message, "error");
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+    fileInput.click();
 }
 
 async function fetchAuthParams()

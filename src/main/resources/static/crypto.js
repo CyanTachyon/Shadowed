@@ -264,21 +264,23 @@ async function decryptSymmetricKey(encryptedKeyStr, privateKey)
  * @param {CryptoKey} key - AES-GCM key.
  * @returns {Promise<string>} Base64 encoded JSON {iv, data}.
  */
-async function encryptMessageSymmetric(message, key)
+async function encryptMessageString(message, key)
 {
-    const enc = new TextEncoder();
-    const data = enc.encode(message);
-    const iv = cryptoObj.getRandomValues(new Uint8Array(12));
+    const data = new TextEncoder().encode(message);
+    return await encryptMessageBytes(data, key);
+}
 
+async function encryptMessageBytes(dataBytes, key)
+{
+    const iv = cryptoObj.getRandomValues(new Uint8Array(12));
     const encryptedContent = await subtle.encrypt(
         {
             name: "AES-GCM",
             iv: iv
         },
         key,
-        data
+        dataBytes
     );
-
     const ivString = bytesToBase64(iv);
     const dataString = arrayBufferToBase64(encryptedContent);
     return ivString + "." + dataString;
@@ -290,29 +292,24 @@ async function encryptMessageSymmetric(message, key)
  * @param {CryptoKey} key - AES-GCM key.
  * @returns {Promise<string>} Plaintext.
  */
-async function decryptMessageSymmetric(encryptedMessageStr, key)
+async function decryptMessageString(encryptedMessageStr, key)
 {
-    try
-    {
-        const split = encryptedMessageStr.split(".", 2);
-        const iv = base64ToBytes(split[0]);
-        const data = base64ToBytes(split[1]);
+    return new TextDecoder().decode(await decryptMessageBytes(encryptedMessageStr, key));
+}
 
-        const decryptedData = await subtle.decrypt(
-            {
-                name: "AES-GCM",
-                iv: iv
-            },
-            key,
-            data
-        );
-        return new TextDecoder().decode(decryptedData);
-    }
-    catch (e)
-    {
-        console.error("Symmetric decryption failed", e);
-        return "[Decryption Error]";
-    }
+async function decryptMessageBytes(encryptedMessageStr, key)
+{
+    const split = encryptedMessageStr.split(".", 2);
+    const iv = base64ToBytes(split[0]);
+    const data = base64ToBytes(split[1]);
+    return await subtle.decrypt(
+        {
+            name: "AES-GCM",
+            iv: iv
+        },
+        key,
+        data
+    );
 }
 
 function arrayBufferToBase64(buffer)

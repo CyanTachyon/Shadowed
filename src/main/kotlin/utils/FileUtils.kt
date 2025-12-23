@@ -11,6 +11,7 @@ import javax.imageio.ImageIO
 object FileUtils
 {
     val userAvatarDir = File(dataDir, "user_avatars").apply { mkdirs() }
+    val chatFilesDir = File(dataDir, "chat_files").apply { mkdirs() }
 
     suspend fun getAvatar(user: UserId): BufferedImage? = runCatching()
     {
@@ -34,4 +35,23 @@ object FileUtils
             ImageIO.write(image1, "png", avatarFile)
         }
     }
+
+    suspend fun saveChatFile(messageId: Long, bytes: ByteArray)
+    {
+        val chatFile = File(chatFilesDir, "$messageId.dat")
+        withContext(Dispatchers.IO)
+        {
+            chatFile.writeBytes(bytes)
+        }
+    }
+
+    suspend fun getChatFile(messageId: Long): ByteArray? = runCatching()
+    {
+        val chatFile = File(chatFilesDir, "$messageId.dat")
+        if (!chatFile.exists()) return null
+        return withContext(Dispatchers.IO)
+        {
+            chatFile.readBytes()
+        }
+    }.getOrNull()
 }

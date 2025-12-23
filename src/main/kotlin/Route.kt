@@ -20,6 +20,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import moe.tachyon.shadowed.dataClass.ChatId
+import moe.tachyon.shadowed.dataClass.MessageType
 import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.dataClass.UserId
 import moe.tachyon.shadowed.database.*
@@ -122,7 +123,7 @@ fun Application.router() = routing()
                      call.respond(
                         buildJsonObject {
                             put("success", false)
-                            put("message", "Database error or race condition")
+                            put("message", "the username already exists")
                         }
                     )
                 }
@@ -230,6 +231,53 @@ fun Application.router() = routing()
                 call.respond(response)
             }
         }
+
+        post("/send_file")
+        {
+            val chat = call.request.header("X-Chat-Id")?.toIntOrNull()?.let(::ChatId)
+            val username = call.request.header("X-Auth-User")
+            val passwordHash = call.request.header("X-Auth-Token")
+            val messageType = call.request.header("X-Message-Type")?.let(MessageType::fromString)
+            val fileBase64 = call.receiveText().encodeToByteArray()
+            if (chat == null || username == null || passwordHash == null || messageType == null)
+                return@post call.respond(HttpStatusCode.BadRequest)
+            val users = getKoin().get<Users>()
+            val userAuth = users.getUserByUsername(username)
+            if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
+                return@post call.respond(HttpStatusCode.Unauthorized)
+            val messageId = getKoin().get<Messages>().addChatMessage(
+                content = "",
+                type = messageType,
+                chatId = chat,
+                senderId = userAuth.id
+            )
+            getKoin().get<Chats>().updateTime(chat)
+            getKoin().get<ChatMembers>().incrementUnread(chat, userAuth.id)
+            getKoin().get<ChatMembers>().resetUnread(chat, userAuth.id)
+            FileUtils.saveChatFile(messageId, fileBase64)
+            call.respond(
+                buildJsonObject()
+                {
+                    put("messageId", messageId)
+                }
+            )
+            distributeMessage(
+                chatId = chat,
+                messageId = messageId,
+                content = "",
+                type = messageType,
+                sender = userAuth,
+            )
+        }
+
+        get("/file/{messageId}")
+        {
+            val messageId = call.pathParameters["messageId"]?.toLongOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val fileBytes = FileUtils.getChatFile(messageId) ?: return@get call.respond(HttpStatusCode.NotFound)
+            call.response.header(HttpHeaders.CacheControl, "max-age=${30*24*60*60}") // 30 days
+            call.respondText(fileBytes.decodeToString())
+        }
+
         webSocket()
     }
 }
@@ -517,12 +565,13 @@ private fun Route.webSocket() = webSocket("/socket") socket@
 
             if (packetName.equals("send_message", ignoreCase = true))
             {
-                val (chatId, message) = runCatching()
+                val (chatId, message, type) = runCatching()
                 {
                     val json = contentNegotiationJson.parseToJsonElement(packetData)
                     val cid = json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
                     val msg = json.jsonObject["message"]!!.jsonPrimitive.content
-                    Pair(cid, msg)
+                    val t = json.jsonObject["type"]!!.jsonPrimitive.content.let(MessageType::fromString)
+                    Triple(cid, msg, t)
                 }.getOrNull() ?: return@collect send(
                     contentNegotiationJson.encodeToString(
                         NotifyPacket(
@@ -534,39 +583,21 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                 val messages = getKoin().get<Messages>()
 
                 val msgId = messages.addChatMessage(
-                    content = message,
+                    content = if (type == MessageType.TEXT) message else "",
+                    type = type,
                     chatId = chatId,
                     senderId = loginUser.id
                 )
                 getKoin().get<Chats>().updateTime(chatId)
                 getKoin().get<ChatMembers>().incrementUnread(chatId, loginUser.id)
                 getKoin().get<ChatMembers>().resetUnread(chatId, loginUser.id)
-                val members = getKoin().get<ChatMembers>().getMemberIds(chatId)
-                members.forEach()
-                { uid ->
-                    val s = sessions[uid]
-                    if (s != null)
-                    {
-                        s.sendUnreadCount(uid, chatId)
-                        val pushData = buildJsonObject()
-                        {
-                            put("packet", "receive_message")
-                            put("message", buildJsonObject()
-                            {
-                                put("id", msgId)
-                                put("content", message)
-                                put("chatId", chatId.value)
-                                put("senderId", loginUser.id.value)
-                                put("senderName", loginUser.username)
-                                put("time", Clock.System.now().toEpochMilliseconds())
-                            })
-                        }
-                        logger.warning("sending message to $uid")
-                        {
-                            s.send(contentNegotiationJson.encodeToString(pushData))
-                        }
-                    }
-                }
+                distributeMessage(
+                    chatId = chatId,
+                    messageId = msgId,
+                    content = message,
+                    type = type,
+                    sender = loginUser,
+                )
             }
 
             if (packetName.equals("get_messages", ignoreCase = true))
@@ -773,4 +804,41 @@ private suspend fun WebSocketSession.sendUnreadCount(userId: UserId, chatId: Cha
         put("unread", unread)
     }
     return send(contentNegotiationJson.encodeToString(response))
+}
+
+private suspend fun distributeMessage(
+    chatId: ChatId,
+    messageId: Long,
+    content: String,
+    type: MessageType,
+    sender: User,
+)
+{
+    val members = getKoin().get<ChatMembers>().getMemberIds(chatId)
+    members.forEach()
+    { uid ->
+        val s = sessions[uid]
+        if (s != null)
+        {
+            s.sendUnreadCount(uid, chatId)
+            val pushData = buildJsonObject()
+            {
+                put("packet", "receive_message")
+                put("message", buildJsonObject()
+                {
+                    put("id", messageId)
+                    put("content", content)
+                    put("type", type.name)
+                    put("chatId", chatId.value)
+                    put("senderId", sender.id.value)
+                    put("senderName", sender.username)
+                    put("time", Clock.System.now().toEpochMilliseconds())
+                })
+            }
+            logger.warning("sending message to $uid")
+            {
+                s.send(contentNegotiationJson.encodeToString(pushData))
+            }
+        }
+    }
 }

@@ -3,6 +3,7 @@ package moe.tachyon.shadowed.database
 import kotlinx.datetime.Clock
 import moe.tachyon.shadowed.dataClass.ChatId
 import moe.tachyon.shadowed.dataClass.Message
+import moe.tachyon.shadowed.dataClass.MessageType
 import moe.tachyon.shadowed.dataClass.UserId
 import org.jetbrains.exposed.dao.id.LongIdTable
 import org.jetbrains.exposed.sql.ReferenceOption
@@ -16,6 +17,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
     object MessageTable: LongIdTable("messages")
     {
         val content = text("content")
+        val type = enumerationByName<MessageType>("type", 20).default(MessageType.TEXT)
         val time = timestamp("time")
         val chat = reference("chat", Chats.ChatTable, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE).index()
         val sender = reference("sender", Users.UserTable, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE).index()
@@ -24,6 +26,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
 
     suspend fun addChatMessage(
         content: String,
+        type: MessageType,
         chatId: ChatId,
         senderId: UserId
     ): Long = query()
@@ -31,6 +34,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
         table.insertAndGetId()
         {
             it[table.content] = content
+            it[table.type] = type
             it[table.chat] = chatId
             it[table.sender] = senderId
             it[table.isRead] = false
@@ -55,11 +59,12 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
                 Message(
                     id = it[table.id].value,
                     content = it[table.content],
+                    type = it[table.type],
                     chatId = it[table.chat].value,
                     senderId = it[table.sender].value,
                     senderName = it[usersTable.username],
                     time = it[table.time].toEpochMilliseconds(),
-                    isRead = it[table.isRead]
+                    isRead = it[table.isRead],
                 )
             }
             .reversed()

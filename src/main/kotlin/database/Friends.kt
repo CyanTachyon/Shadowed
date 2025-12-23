@@ -3,12 +3,7 @@ package moe.tachyon.shadowed.database
 import moe.tachyon.shadowed.dataClass.ChatId
 import moe.tachyon.shadowed.dataClass.UserId
 import org.jetbrains.exposed.dao.id.CompositeIdTable
-import org.jetbrains.exposed.sql.JoinType
-import org.jetbrains.exposed.sql.ReferenceOption
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.insertIgnore
-import org.jetbrains.exposed.sql.insertIgnoreAndGetId
-import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.*
 import org.koin.core.component.get
 
 class Friends: SqlDao<Friends.FriendTable>(FriendTable)
@@ -33,6 +28,7 @@ class Friends: SqlDao<Friends.FriendTable>(FriendTable)
             onDelete = ReferenceOption.CASCADE,
             onUpdate = ReferenceOption.CASCADE
         ).index()
+        override val primaryKey: PrimaryKey = PrimaryKey(userA, userB)
 
         init
         {

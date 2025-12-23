@@ -13,7 +13,6 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
 {
     object ChatMemberTable: CompositeIdTable("chat_members")
     {
-        override val primaryKey = PrimaryKey(id)
         val chat = reference(
             "chat",
             Chats.ChatTable,
@@ -28,6 +27,7 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
         ).index()
         val key = text("key")
         val unread = integer("unread").default(0)
+        override val primaryKey: PrimaryKey = PrimaryKey(chat, user)
 
         init
         {
