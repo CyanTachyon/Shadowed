@@ -1,10 +1,12 @@
 package moe.tachyon.shadowed.database
 
 import kotlinx.datetime.Clock
+import moe.tachyon.shadowed.dataClass.Chat
 import moe.tachyon.shadowed.dataClass.ChatId
 import moe.tachyon.shadowed.dataClass.UserId
 import moe.tachyon.shadowed.database.Users.UserTable
 import org.jetbrains.exposed.dao.id.IdTable
+import org.jetbrains.exposed.sql.ReferenceOption
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insertAndGetId
 import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
@@ -18,7 +20,7 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
         override val id = chatId("id").autoIncrement().entityId()
         override val primaryKey = PrimaryKey(id)
         val name = varchar("name", 255).nullable()
-        val owner = reference("owner", UserTable)
+        val owner = reference("owner", UserTable, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE).index()
         val private = bool("private")
         val lastChatAt = timestamp("last_chat_at").clientDefault { Clock.System.now() }
     }
@@ -36,9 +38,18 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
         }.value
     }
 
-    suspend fun getChat(chatId: ChatId) = query()
+    suspend fun getChat(chatId: ChatId): Chat? = query()
     {
-        table.selectAll().where { table.id eq chatId }.singleOrNull()
+        table.selectAll().where { table.id eq chatId }.singleOrNull()?.let()
+        {
+            Chat(
+                id = it[table.id].value,
+                name = it[table.name],
+                owner = it[table.owner].value,
+                private = it[table.private],
+                lastChatAt = it[table.lastChatAt],
+            )
+        }
     }
 
     suspend fun isChatOwner(chatId: ChatId, userId: UserId): Boolean = query()

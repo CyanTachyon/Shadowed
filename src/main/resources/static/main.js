@@ -28,113 +28,124 @@ function showToast(message, type = 'info', onClick = null)
 
 const refreshChats = () => socket.send(`get_chats`);
 
+let handlePacketLock = null;
 async function handlePacket(data)
 {
-    switch (data.packet)
+    while (handlePacketLock) await handlePacketLock;
+    let resolve;
+    handlePacketLock = new Promise(r => resolve = r);
+    try
     {
-        case 'notify': {
-            const type = data.type === 'ERROR' ? 'error' : (data.type === 'INFO' ? 'success' : 'info');
-            showToast(data.message, type);
-            if (data.packet === 'notify' && data.type === 'INFO' && (data.message.includes("Friend added") || data.message.includes("Group created") || data.message.includes("Chat renamed")))
-            {
-                refreshChats();
-            }
-            return;
-        }
-        case 'login_success': {
-            try
-            {
-                const user = data.user;
-                window.username = user.username;
-                const passwordKey = await deriveKeyFromPassword(window.password, user.username);
-                privateKey = await decryptPrivateKey(user.privateKey, passwordKey);
-
-                if (!privateKey)
-                {
-                    showToast("Failed to decrypt private key. Wrong password?", "error");
-                    return;
-                }
-                console.log("Private key decrypted successfully");
-            }
-            catch (e)
-            {
-                console.error("Login crypto error", e);
-                showToast("Crypto error during login", "error");
+        switch (data.packet)
+        {
+            case 'notify': {
+                const type = data.type === 'ERROR' ? 'error' : (data.type === 'INFO' ? 'success' : 'info');
+                showToast(data.message, type);
+                if (data.packet === 'notify' && data.type === 'INFO' && (data.message.includes("Friend added") || data.message.includes("Group created") || data.message.includes("Chat renamed")))
+                    refreshChats();
                 return;
             }
-            currentUser = data.user;
-            document.getElementById('auth-overlay').style.display = 'none';
-            document.getElementById('chat-interface').style.display = 'flex';
-            const userNameEl = document.getElementById('current-user-name');
-            if (userNameEl) userNameEl.innerText = currentUser.username;
-            updateCurrentUserAvatar();
-            refreshChats();
-            return;
-        }
-        case 'public_key_by_username': {
-            if (window.pendingKeyRequests && window.pendingKeyRequests[data.username])
-            {
-                window.pendingKeyRequests[data.username](data.publicKey);
-                delete window.pendingKeyRequests[data.username];
-            }
-            return;
-        }
-        case 'chats_list': {
-            handleChatsList(data.chats);
-            return;
-        }
-        case 'messages_list': {
-            currentChatMessages.push(...data.messages);
-            if (data.chatId === currentChatId) window.hasMoreMessages = data.messages.length > 0;
-            await renderMessages(true);
-            return;
-        }
-        case 'receive_message': {
-
-            if (data.message.chatId === currentChatId)
-            {
-                currentChatMessages.push(data.message);
-                await renderMessages(false);
-            }
-            else showToast("New message in Chat " + data.message.chatId, 'info', () => selectChat(data.message))
-            return;
-        }
-        case 'friends_list': {
-            renderFriendsForSelection(data.friends);
-            return;
-        }
-        case 'chat_details': {
-            renderChatSettings(data);
-            return;
-        }
-        case 'friend_added': {
-            showToast(data.message, 'success');
-            refreshChats();
-            window.pendingChatToOpen = data.chatId;
-            return;
-        }
-        case 'unread_count': {
-            const chatId = data.chatId;
-            const unreadCount = data.unread;
-            const chatDiv = document.getElementById(`chat-${chatId}`);
-            if (chatDiv)
-            {
-                const badge = chatDiv.querySelector('.unread-badge');
-                if (unreadCount > 0)
+            case 'login_success': {
+                try
                 {
-                    if (badge) badge.innerText = unreadCount;
-                    else
+                    const user = data.user;
+                    window.username = user.username;
+                    const passwordKey = await deriveKeyFromPassword(window.password, user.username);
+                    privateKey = await decryptPrivateKey(user.privateKey, passwordKey);
+
+                    if (!privateKey)
                     {
-                        const newBadge = document.createElement('div');
-                        newBadge.className = 'unread-badge';
-                        newBadge.innerText = unreadCount;
-                        chatDiv.querySelector('.unread-parent').appendChild(newBadge);
+                        showToast("Failed to decrypt private key. Wrong password?", "error");
+                        return;
                     }
+                    console.log("Private key decrypted successfully");
                 }
-                else if (badge) badge.remove();
+                catch (e)
+                {
+                    console.error("Login crypto error", e);
+                    showToast("Crypto error during login", "error");
+                    return;
+                }
+                currentUser = data.user;
+                document.getElementById('auth-overlay').style.display = 'none';
+                document.getElementById('chat-interface').style.display = 'flex';
+                const userNameEl = document.getElementById('current-user-name');
+                if (userNameEl) userNameEl.innerText = currentUser.username;
+                updateCurrentUserAvatar();
+                refreshChats();
+                return;
             }
-            return;
+            case 'public_key_by_username': {
+                if (window.pendingKeyRequests && window.pendingKeyRequests[data.username])
+                {
+                    window.pendingKeyRequests[data.username](data.publicKey);
+                    delete window.pendingKeyRequests[data.username];
+                }
+                return;
+            }
+            case 'chats_list': {
+                await handleChatsList(data.chats);
+                return;
+            }
+            case 'messages_list': {
+                currentChatMessages.push(...data.messages);
+                if (data.chatId === currentChatId) window.hasMoreMessages = data.messages.length > 0;
+                await renderMessages(true);
+                return;
+            }
+            case 'receive_message': {
+
+                if (data.message.chatId === currentChatId)
+                {
+                    currentChatMessages.push(data.message);
+                    await renderMessages(false);
+                }
+                else showToast("New message in Chat " + data.message.chatId, 'info', () => selectChat(data.message))
+                return;
+            }
+            case 'friends_list': {
+                renderFriendsForSelection(data.friends);
+                return;
+            }
+            case 'chat_details': {
+                if (data.chat.id === currentChatId)
+                    renderChatSettings(data);
+                return;
+            }
+            case 'friend_added': {
+                showToast(data.message, 'success');
+                refreshChats();
+                window.pendingChatToOpen = data.chatId;
+                return;
+            }
+            case 'unread_count': {
+                const chatId = data.chatId;
+                const unreadCount = data.unread;
+                const chatDiv = document.getElementById(`chat-${chatId}`);
+                if (chatDiv)
+                {
+                    const badge = chatDiv.querySelector('.unread-badge');
+                    if (unreadCount > 0)
+                    {
+                        if (badge) badge.innerText = unreadCount;
+                        else
+                        {
+                            const newBadge = document.createElement('div');
+                            newBadge.className = 'unread-badge';
+                            newBadge.innerText = unreadCount;
+                            chatDiv.querySelector('.unread-parent').appendChild(newBadge);
+                        }
+                    }
+                    else if (badge) badge.remove();
+                }
+                return;
+            }
         }
+    }
+    finally
+    {
+        resolve();
+        handlePacketLock = null;
     }
 }
 
@@ -142,10 +153,25 @@ async function register()
 {
     const username = document.getElementById('reg-username').value;
     const password = document.getElementById('reg-password').value;
+    const confirmPassword = document.getElementById('reg-password-confirm').value;
 
-    if (!username || !password)
+    if (!username || !password || !confirmPassword)
     {
         showToast("Please fill all fields", "error");
+        return;
+    }
+
+    if (password !== confirmPassword)
+    {
+        document.getElementById('reg-password').value = '';
+        document.getElementById('reg-password-confirm').value = '';
+        showToast("Passwords do not match", "error");
+        return;
+    }
+
+    if (password.length < 8)
+    {
+        showToast("Password must be at least 8 characters long", "error");
         return;
     }
 
@@ -200,7 +226,8 @@ async function login(username, password)
             username: username,
             password: authHash
         };
-        socket.send(`login\n${JSON.stringify(packet)}`);
+        if (socket.readyState === WebSocket.OPEN)
+            socket.send(`login\n${JSON.stringify(packet)}`);
     }
     catch (e)
     {
@@ -290,7 +317,6 @@ let currentChatId = null;
 
 function selectChat(chat)
 {
-    closeChatSettings();
     currentChatId = chat.chatId;
     currentChatMessages = [];
     const chatWithEl = document.getElementById('chat-with');
@@ -320,7 +346,10 @@ function selectChat(chat)
     if (selectedItem) selectedItem.classList.add('active');
 
     // 清空聊天消息，显示loading
-    document.getElementById('messages-container').innerHTML = '<div style="padding: 20px; text-align: center; color: var(--secondary-color);" id="placeholder">Loading messages...</div>';
+    const container = document.getElementById('messages-container');
+    container.onscroll = null;
+    container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--secondary-color);" id="placeholder">Loading messages...</div>';
+    container.onscroll = handleContainerScroll;
 
     // Reset pagination
     window.currentChatOffset = 0;
@@ -351,21 +380,13 @@ function enterChatView()
     else history.pushState(state, '');
 }
 
-function leaveChatView()
-{
-    if (history.state && history.state.view === 'chat') history.back();
-    else
-    {
-        document.body.classList.remove('view-chat');
-        document.body.classList.remove('view-settings');
-    }
-}
-
 window.onpopstate = function (event)
 {
     const state = event.state;
+    console.log(state)
     if (!state || state.view === 'list')
     {
+        event.preventDefault();
         document.body.classList.remove('view-chat');
         document.body.classList.remove('view-settings');
     }
@@ -381,8 +402,9 @@ window.onpopstate = function (event)
     }
     else if (state.view === 'settings')
     {
-        document.body.classList.add('view-settings');
-        document.getElementById('chat-settings-panel').style.display = 'flex';
+        document.body.classList.add('view-chat');
+        if (!document.body.classList.contains('view-settings'))
+            toggleChatSettings()
     }
 };
 
@@ -432,11 +454,12 @@ function connectWebSocket()
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(`${protocol}//${window.location.host}/api/socket`);
 
-    socket.onopen = () =>
+    socket.onopen = async () =>
     {
         console.log("Connected to WebSocket");
         reconnectAttempts = 0;
-        if (window.password && window.username) login(window.username, window.password);
+        if (window.password && window.username)
+            await login(window.username, window.password);
     };
 
     socket.onmessage = async (event) =>
@@ -491,8 +514,7 @@ async function createMessageElement(msg)
             div.style.marginLeft = '40px';
         }
     }
-
-
+    
     const contentDiv = document.createElement('div');
 
     try
@@ -502,7 +524,28 @@ async function createMessageElement(msg)
         else if (msg.type.toLowerCase() === 'text') contentDiv.innerText = await decryptMessageString(msg.content, chatKey);
         else if (msg.type.toLowerCase() === 'image')
         {
-            contentDiv.innerText = "[Loading Image...]";
+            contentDiv.style.position = 'relative';
+            let metadata = null;
+            try
+            {
+                metadata = JSON.parse(await decryptMessageString(msg.content, chatKey));
+            }
+            catch (e) {}
+
+            if (metadata && typeof metadata.width === 'number' && typeof metadata.height === 'number')
+            {
+                const width = metadata.width;
+                const height = metadata.height;
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const placeholderUrl = canvas.toDataURL('image/png');
+                contentDiv.innerHTML = `
+                    <img src="${placeholderUrl}" style="max-width: 100%; max-height: 300px; opacity: 0" alt=""/>
+                `;
+            }
+            else contentDiv.innerText = "[Loading image...]";
+            
             fetch(`/api/file/${msg.id}`).then(res => res.text()).then(async base64 =>
             {
                 const imageData = await decryptMessageBytes(base64, chatKey);
@@ -512,7 +555,14 @@ async function createMessageElement(msg)
                 img.src = url;
                 img.style.maxWidth = '100%';
                 img.style.maxHeight = '300px';
-                contentDiv.innerHTML = '';
+                if (metadata && typeof metadata.width === 'number' && typeof metadata.height === 'number')
+                {
+                    img.style.position = 'absolute';
+                    img.style.top = '0';
+                    img.style.left = '0';
+                    img.style.zIndex = '1';
+                }
+                else contentDiv.innerHTML = '';
                 contentDiv.appendChild(img);
             });
         }
@@ -734,25 +784,6 @@ async function createGroup()
 
 function toggleChatSettings()
 {
-    const panel = document.getElementById('chat-settings-panel');
-    const isVisible = panel.style.display === 'flex';
-    if (isVisible || document.body.classList.contains('view-settings')) closeChatSettings();
-    else
-    {
-        panel.style.display = 'flex';
-        socket.send(`get_chat_details\n${JSON.stringify({ chatId: currentChatId })}`);
-        const state = { view: 'settings', chatId: currentChatId };
-        if (history.state && history.state.view === 'settings' && history.state.chatId === currentChatId) history.replaceState(state, '');
-        else history.pushState(state, '');
-    }
-}
-
-function closeChatSettings()
-{
-    const panel = document.getElementById('chat-settings-panel');
-    if (!panel) return;
-    panel.style.display = 'none';
-    if (history.state && history.state.view === 'settings') history.back();
     renderChatSettings({
         chat: {
             id: 0,
@@ -762,60 +793,139 @@ function closeChatSettings()
             members: []
         }
     });
+    if (document.body.classList.contains('view-settings')) history.back();
+    else
+    {
+        document.body.classList.add('view-settings');
+        socket.send(`get_chat_details\n${JSON.stringify({ chatId: currentChatId })}`);
+        const state = { view: 'settings', chatId: currentChatId };
+        if (history.state && history.state.view === 'settings' && history.state.chatId === currentChatId) history.replaceState(state, '');
+        else history.pushState(state, '');
+    }
 }
 
 function renderChatSettings(details)
 {
     const container = document.getElementById('settings-content');
+    container.innerHTML = '';
     const chat = details.chat;
     const myId = (currentUser.id.value || currentUser.id);
     const isOwner = chat.ownerId === myId;
     const isPrivate = chat.isPrivate;
 
-    let html = '';
-
-    // Only show chat name and rename for group chats
     if (!isPrivate)
     {
-        html += `
-            <div class="settings-section">
-                <div class="section-title">Chat Name</div>
-                <div style="font-weight: bold; margin-bottom: 5px;" id="current-chat-name-display">${chat.name || 'Chat ' + chat.id}</div>
-                ${isOwner ? `
-                    <div class="rename-group">
-                        <input type="text" id="new-chat-name" placeholder="New name">
-                        <button onclick="updateChatName()">Rename</button>
-                    </div>
-                ` : ''}
-            </div>
-        `;
+        const settingsSection = document.createElement('div');
+        settingsSection.className = 'settings-section';
+
+        const sectionTitle = document.createElement('div');
+        sectionTitle.className = 'section-title';
+        sectionTitle.innerText = 'Chat Name';
+        settingsSection.appendChild(sectionTitle);
+
+        const currentNameDisplay = document.createElement('div');
+        currentNameDisplay.id = 'current-chat-name-display';
+        currentNameDisplay.style.fontWeight = 'bold';
+        currentNameDisplay.style.marginBottom = '5px';
+        currentNameDisplay.innerText = chat.name || 'Chat ' + chat.id;
+        settingsSection.appendChild(currentNameDisplay);
+
+        const renameGroupDiv = document.createElement('div');
+        renameGroupDiv.className = 'rename-group';
+        if (isOwner)
+        {
+
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.id = 'new-chat-name';
+            nameInput.placeholder = 'New name';
+            renameGroupDiv.appendChild(nameInput);
+
+            const renameButton = document.createElement('button');
+            renameButton.innerText = 'Rename';
+            renameButton.onclick = updateChatName;
+            renameGroupDiv.appendChild(renameButton);
+        }
+        else
+        {
+            const leaveGroupBtn = document.createElement('button');
+            leaveGroupBtn.className = 'leave-group-btn';
+            leaveGroupBtn.onclick = () => openKickMemberModal(chat, currentUser);
+            leaveGroupBtn.innerText = 'Leave Group';
+            renameGroupDiv.appendChild(leaveGroupBtn);
+        }
+
+        settingsSection.appendChild(renameGroupDiv);
+        container.appendChild(settingsSection);
     }
 
-    // Members section for all chats
-    html += `
-        <div class="settings-section">
-            <div class="section-title">Members (${chat.members.length})</div>
-            ${!isPrivate ? `
-                <button class="button" onclick="showInviteMemberModal()" style="width: 100%; margin-bottom: 10px;">Invite Member</button>
-            ` : ''}
-            <div class="member-list">
-                ${chat.members.map(m => `
-                    <div class="member-item" onclick="startPrivateChat('${m.username}')">
-                        <div style="width: 32px; height: 32px; margin-right: 10px; position: relative; flex-shrink: 0;">
-                            <img src="${fetchAvatarUrl(m.id)}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" alt="avatar">
-                            <div class="avatar" style="width: 100%; height: 100%; position: absolute; top:0; left:0; display: none;">${m.username[0].toUpperCase()}</div>
-                        </div>
-                        <span style="overflow: hidden; text-overflow: ellipsis;">${m.username} ${m.id === chat.ownerId ? '<span style="color:var(--primary-color); font-size:0.8em">(Owner)</span>' : ''} ${m.id === myId ? '<span style="color:var(--secondary-color); font-size:0.8em">(Me)</span>' : ''}</span>
-                    </div>
-                `).join('')}
-            </div>
-        </div>
-    `;
+    const settingsSection = document.createElement('div');
+    settingsSection.className = 'settings-section';
 
-    // Store current chat details for invite functionality
+    const sectionTitle = document.createElement('div');
+    sectionTitle.className = 'section-title';
+    sectionTitle.innerText = `Members (${chat.members.length})`;
+    settingsSection.appendChild(sectionTitle);
+
+    if (!isPrivate)
+    {
+        const inviteButton = document.createElement('button');
+        inviteButton.className = 'button';
+        inviteButton.style.width = '100%';
+        inviteButton.style.marginBottom = '10px';
+        inviteButton.innerText = 'Invite Member';
+        inviteButton.onclick = () => showInviteMemberModal();
+        settingsSection.appendChild(inviteButton);
+    }
+
+    const memberListDiv = document.createElement('div');
+    memberListDiv.className = 'member-list';
+
+    chat.members.forEach(m =>
+    {
+        const memberItemDiv = document.createElement('div');
+        memberItemDiv.className = 'member-item';
+
+        const avatarContainer = document.createElement('div');
+        avatarContainer.style.width = '32px';
+        avatarContainer.style.height = '32px';
+        avatarContainer.style.marginRight = '10px';
+        avatarContainer.style.position = 'relative';
+        avatarContainer.style.flexShrink = '0';
+
+        const avatarImg = document.createElement('img');
+        avatarImg.src = fetchAvatarUrl(m.id);
+        avatarImg.style.width = '100%';
+        avatarImg.style.height = '100%';
+        avatarImg.style.borderRadius = '50%';
+        avatarImg.style.objectFit = 'cover';
+        avatarImg.alt = 'avatar';
+        avatarImg.onclick = () => startPrivateChat(m.username);
+        avatarContainer.appendChild(avatarImg);
+
+        memberItemDiv.appendChild(avatarContainer);
+
+        const memberNameSpan = document.createElement('span');
+        memberNameSpan.style.overflow = 'hidden';
+        memberNameSpan.style.textOverflow = 'ellipsis';
+        memberNameSpan.innerHTML = `${m.username} ${m.id === chat.ownerId ? '<span style="color:var(--primary-color); font-size:0.8em">(Owner)</span>' : ''} ${m.id === myId ? '<span style="color:var(--secondary-color); font-size:0.8em">(Me)</span>' : ''}`;
+        memberNameSpan.onclick = () => startPrivateChat(m.username);
+        memberItemDiv.appendChild(memberNameSpan);
+
+        const kickBtn = document.createElement('button');
+        kickBtn.className = 'kick-member-btn';
+        kickBtn.innerText = 'kick';
+        kickBtn.style.display = (isOwner && m.id !== myId) ? 'inline-block' : 'none';
+        kickBtn.onclick = (e) => openKickMemberModal(chat, m);
+        memberItemDiv.appendChild(kickBtn);
+
+        memberListDiv.appendChild(memberItemDiv);
+    });
+
+    settingsSection.appendChild(memberListDiv);
+    container.appendChild(settingsSection);
+
     window.currentChatDetails = chat;
-
-    container.innerHTML = html;
 }
 
 async function updateChatName()
@@ -903,6 +1013,7 @@ async function sendImage()
         reader.onload = async (e) =>
         {
             const arrayBuffer = e.target.result;
+            const { width, height } = await getImageSizeFromArrayBuffer(arrayBuffer);
             const chatKey = chatKeys[currentChatId];
             if (!chatKey)
             {
@@ -910,9 +1021,27 @@ async function sendImage()
                 return;
             }
 
+            let metadata;
+            let encrypted;
             try
             {
-                const encrypted = await encryptMessageBytes(arrayBuffer, chatKey);
+                encrypted = await encryptMessageBytes(arrayBuffer, chatKey);
+                metadata = await encryptMessageString(JSON.stringify({ width: width, height: height, filename: file.name, size: file.size }), chatKey)
+                if (encrypted.length > 10 * 1024 * 1024)
+                {
+                    showToast("Image too large! Max size is 10MB after encryption.", "error");
+                    return;
+                }
+            }
+            catch (e)
+            {
+                console.error("Encrypt failed", e);
+                showToast("Failed to encrypt image: " + e.message, "error");
+            }
+
+            showToast("Uploading image...", "info");
+            try
+            {
                 await fetch("/api/send_file", {
                     method: 'POST',
                     headers: {
@@ -920,15 +1049,16 @@ async function sendImage()
                         'X-Auth-Token': currentUserAuthToken,
                         'X-Chat-Id': currentChatId,
                         'X-Message-Type': 'image',
-                        'X-Auth-User': currentUser.username
+                        'X-Auth-User': currentUser.username,
+                        'X-Message-Metadata': metadata,
                     },
                     body: encrypted
-                })
+                });
             }
             catch (e)
             {
-                console.error("Encrypt failed", e);
-                showToast("Failed to encrypt image: " + e.message, "error");
+                console.error("Image upload failed", e);
+                showToast("Failed to upload image: " + e.message, "error");
             }
         };
         reader.readAsArrayBuffer(file);
@@ -967,22 +1097,19 @@ function toggleTheme()
 
 function handleKeyPress(e)
 {
-    if (e.key === 'Enter') sendMessage();
+    if (e.key === 'Enter')
+        if (isMobileDevice() === e.shiftKey)
+            sendMessage();
 }
 
 const logout = () => window.location.reload();
 
 function showInviteMemberModal()
 {
-    console.log("showInviteMemberModal called");
     const modal = document.getElementById('create-group-modal');
     if (!modal)
-    {
-        console.error("Modal element not found!");
-        return;
-    }
+        return showToast("Invite member modal not found!", "error");
     modal.style.display = 'flex';
-    console.log("Modal display set to flex");
     const modalTitle = document.querySelector('#create-group-modal h3');
     if (modalTitle) modalTitle.innerText = 'Invite Member';
     const groupNameInput = document.getElementById('group-name');
@@ -1044,6 +1171,84 @@ async function inviteMemberToChat(username)
         showToast("Failed to invite member: " + e.message, "error");
     }
 }
+
+function showResetPasswordModal()
+{
+    const modal = document.getElementById('reset-password-modal');
+    if (!modal)
+        return showToast("Reset password modal not found!", "error");
+    modal.style.display = 'flex';
+}
+
+async function resetPassword()
+{
+    const newPassword = document.getElementById('reset-password').value;
+    const confirmPassword = document.getElementById('reset-password-confirm').value;
+    if (!newPassword || !confirmPassword)
+        return showToast("Please fill in all fields", "error");
+    if (newPassword !== confirmPassword)
+    {
+        document.getElementById('reset-password').value = '';
+        document.getElementById('reset-password-confirm').value = '';
+        return showToast("Passwords do not match", "error");
+    }
+    if (newPassword.length < 8)
+        return showToast("Password must be at least 8 characters", "error");
+    try
+    {
+        const serverKey = await fetchAuthParams();
+        const username = currentUser.username;
+        const newPasswordHash = await hashPasswordWithServerKey(newPassword, serverKey);
+        const oldPasswordHash = await hashPasswordWithServerKey(window.password, serverKey);
+        const newPrivateKey = await encryptPrivateKey(privateKey, await deriveKeyFromPassword(newPassword, username));
+
+        const response = await fetch('/api/resetPassword', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: username,
+                oldPassword: oldPasswordHash,
+                newPassword: newPasswordHash,
+                privateKey: newPrivateKey
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) logout();
+        else showToast("" + (result.message || "Password reset failed"), "error");
+    }
+    catch (e)
+    {
+        console.error(e);
+        showToast("Error during password reset", "error");
+    }
+}
+
+const closeResetPasswordModal = () => document.getElementById('reset-password-modal').style.display = 'none';
+
+function openKickMemberModal(chat, user)
+{
+    const modal = document.getElementById('kick-member-modal');
+    if (!modal)
+        return showToast("Kick member modal not found!", "error");
+
+    document.getElementById('kick-member-name').innerText = user.username;
+    document.getElementById('kick-member-avatar').src = fetchAvatarUrl(user.id);
+    if (user.username !== currentUser.username)
+        document.getElementById('kick-member-msg').innerText = `Are you sure you want to kick ${user.username} from "${chat.name || 'Chat ' + chat.id}"?`;
+    else
+        document.getElementById('kick-member-msg').innerText = `Are you sure you want to leave "${chat.username || 'Chat ' + chat.id}"?`;
+    document.getElementById('confirm-kick-btn').onclick = async () => {
+        closeKickMemberModal();
+        socket.send(`kick_member_from_chat\n${JSON.stringify({
+            chatId: chat.id,
+            username: user.username
+        })}`);
+    };
+
+    modal.style.display = 'flex';
+}
+const closeKickMemberModal = () => document.getElementById('kick-member-modal').style.display = 'none';
 
 // --- Avatar & Menu Logic ---
 

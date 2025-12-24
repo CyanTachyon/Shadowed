@@ -8,6 +8,7 @@ import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.insertIgnoreAndGetId
 import org.jetbrains.exposed.sql.lowerCase
 import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.update
 
 class Users: SqlDao<Users.UserTable>(UserTable)
 {
@@ -57,5 +58,18 @@ class Users: SqlDao<Users.UserTable>(UserTable)
     suspend fun getUser(id: UserId): User? = query()
     {
         table.selectAll().where { table.id eq id }.singleOrNull()?.let(::deserialize)
+    }
+
+    suspend fun updatePasswordAndKey(
+        userId: UserId,
+        newEncryptedPassword: String,
+        newEncryptedPrivateKey: String
+    ) = query()
+    {
+        update({ table.id eq userId })
+        {
+            it[password] = newEncryptedPassword
+            it[privateKey] = newEncryptedPrivateKey
+        }
     }
 }

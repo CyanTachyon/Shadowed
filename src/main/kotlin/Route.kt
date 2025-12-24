@@ -1,6 +1,7 @@
 package moe.tachyon.shadowed
 
 import at.favre.lib.crypto.bcrypt.BCrypt
+import io.ktor.client.request.request
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.application.*
@@ -20,7 +21,9 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
+import moe.tachyon.shadowed.dataClass.Chat
 import moe.tachyon.shadowed.dataClass.ChatId
+import moe.tachyon.shadowed.dataClass.ChatId.Companion.toChatId
 import moe.tachyon.shadowed.dataClass.MessageType
 import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.dataClass.UserId
@@ -140,6 +143,51 @@ fun Application.router() = routing()
             }
         }
 
+        post("/resetPassword")
+        {
+            @Serializable
+            data class ResetPasswordRequest(
+                val username: String,
+                val oldPassword: String,
+                val newPassword: String,
+                val privateKey: String,
+            )
+
+            val resetRequest = call.receive<ResetPasswordRequest>()
+            val user = users.getUserByUsername(resetRequest.username)
+            if (user == null)
+            {
+                call.respond(
+                    buildJsonObject {
+                        put("success", false)
+                        put("message", "User not found")
+                    }
+                )
+                return@post
+            }
+            if (!verifyPassword(resetRequest.oldPassword, user.password))
+            {
+                call.respond(
+                    buildJsonObject {
+                        put("success", false)
+                        put("message", "Old password is incorrect")
+                    }
+                )
+                return@post
+            }
+            users.updatePasswordAndKey(
+                userId = user.id,
+                newEncryptedPassword = encryptPassword(resetRequest.newPassword),
+                newEncryptedPrivateKey = resetRequest.privateKey,
+            )
+            return@post call.respond(
+                buildJsonObject {
+                    put("success", true)
+                    put("message", "Password and key updated successfully")
+                }
+            )
+        }
+
         route("/user")
         {
             post("/avatar")
@@ -198,7 +246,6 @@ fun Application.router() = routing()
 
                 val avatarImage = FileUtils.getAvatar(UserId(id))
 
-
                 call.response.header(HttpHeaders.CacheControl, "max-age=300")
                 if (avatarImage != null)
                 {
@@ -239,6 +286,7 @@ fun Application.router() = routing()
             val username = call.request.header("X-Auth-User")
             val passwordHash = call.request.header("X-Auth-Token")
             val messageType = call.request.header("X-Message-Type")?.let(MessageType::fromString)
+            val metadata = call.request.header("X-Message-Metadata") ?: ""
             val bodySize = call.request.header(HttpHeaders.ContentLength)?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.LengthRequired)
             if (bodySize > environment.config.property("maxImageSize").getString().toLong())
             {
@@ -253,7 +301,7 @@ fun Application.router() = routing()
             if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
                 return@post call.respond(HttpStatusCode.Unauthorized)
             val messageId = getKoin().get<Messages>().addChatMessage(
-                content = "",
+                content = metadata,
                 type = messageType,
                 chatId = chat,
                 senderId = userAuth.id
@@ -271,7 +319,7 @@ fun Application.router() = routing()
             distributeMessage(
                 chatId = chat,
                 messageId = messageId,
-                content = "",
+                content = metadata,
                 type = messageType,
                 sender = userAuth,
             )
@@ -587,8 +635,15 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                         )
                     )
                 )
+                if (getKoin().get<ChatMembers>().getUserChats(loginUser.id).none { it.chatId == chatId }) return@collect send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(
+                            type = NotifyPacket.Type.ERROR,
+                            message = "Send message failed: You are not a member of this chat",
+                        )
+                    )
+                )
                 val messages = getKoin().get<Messages>()
-
                 val msgId = messages.addChatMessage(
                     content = if (type == MessageType.TEXT) message else "",
                     type = type,
@@ -621,6 +676,15 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                         NotifyPacket(
                             type = NotifyPacket.Type.ERROR,
                             message = "Get messages failed: Invalid packet format",
+                        )
+                    )
+                )
+
+                if (getKoin().get<ChatMembers>().getUserChats(loginUser.id).none { it.chatId == chatId }) return@collect send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(
+                            type = NotifyPacket.Type.ERROR,
+                            message = "Get messages failed: You are not a member of this chat",
                         )
                     )
                 )
@@ -676,19 +740,7 @@ private fun Route.webSocket() = webSocket("/socket") socket@
 
                 val members = getKoin().get<ChatMembers>().getChatMembersDetailed(chatId)
 
-                val response = buildJsonObject()
-                {
-                    put("packet", "chat_details")
-                    put("chat", buildJsonObject()
-                    {
-                        put("id", chat[Chats.ChatTable.id].value.value)
-                        put("name", chat[Chats.ChatTable.name])
-                        put("ownerId", chat[Chats.ChatTable.owner].value.value)
-                        put("isPrivate", chat[Chats.ChatTable.private])
-                        put("members", contentNegotiationJson.encodeToJsonElement(members))
-                    })
-                }
-                return@collect send(contentNegotiationJson.encodeToString(response))
+                return@collect sendChatDetails(chat, members)
             }
 
             if (packetName.equals("rename_chat", ignoreCase = true))
@@ -773,6 +825,65 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                         NotifyPacket(NotifyPacket.Type.INFO, "Member added successfully")
                     )
                 )
+
+                val members = chatMembers.getChatMembersDetailed(chatId)
+                val chat = getKoin().get<Chats>().getChat(chatId)!!
+                members.forEach()
+                {
+                    runCatching { sessions[it.id]?.sendChatDetails(chat, members) }
+                }
+            }
+
+            if (packetName.equals("kick_member_from_chat", ignoreCase = true))
+            {
+                val (chatId, username) = runCatching()
+                {
+                    val json = contentNegotiationJson.parseToJsonElement(packetData)
+                    val id = json.jsonObject["chatId"]!!.jsonPrimitive.int.toChatId()
+                    val user = json.jsonObject["username"]!!.jsonPrimitive.content
+                    Pair(id, user)
+                }.getOrNull() ?: return@collect send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(NotifyPacket.Type.ERROR, "Invalid packet format")
+                    )
+                )
+                val chats = getKoin().get<Chats>()
+                val isOwner = chats.isChatOwner(chatId, loginUser.id)
+                if (!isOwner && loginUser.username != username) return@collect send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(NotifyPacket.Type.ERROR, "Only owner can kick members")
+                    )
+                )
+                if (isOwner && loginUser.username == username) return@collect send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(NotifyPacket.Type.ERROR, "As owner, you cannot kick yourself")
+                    )
+                )
+
+                val chatMembers = getKoin().get<ChatMembers>()
+                val targetUser = getKoin().get<Users>().getUserByUsername(username) ?: return@collect send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(NotifyPacket.Type.ERROR, "User not found: $username")
+                    )
+                )
+                val members = chatMembers.getChatMembersDetailed(chatId).filterNot { it.id == targetUser.id }
+                if (members.size <= 2) return@collect send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(NotifyPacket.Type.ERROR, "Cannot kick member: Chat must have at least 3 members")
+                    )
+                )
+                chatMembers.removeMember(chatId, targetUser.id)
+                send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(NotifyPacket.Type.INFO, "Member kicked successfully")
+                    )
+                )
+                val chat = chats.getChat(chatId)!!
+                members.forEach()
+                {
+                    runCatching { sessions[it.id]?.sendChatDetails(chat, members) }
+                }
+                runCatching { sessions[targetUser.id]?.sendChatList(targetUser.id) }
             }
         }
     }
@@ -848,4 +959,21 @@ private suspend fun distributeMessage(
             }
         }
     }
+}
+
+private suspend fun WebSocketSession.sendChatDetails(chat: Chat, members: List<User>)
+{
+    val response = buildJsonObject()
+    {
+        put("packet", "chat_details")
+        put("chat", buildJsonObject()
+        {
+            put("id", chat.id.value)
+            put("name", chat.name)
+            put("ownerId", chat.owner.value)
+            put("isPrivate", chat.private)
+            put("members", contentNegotiationJson.encodeToJsonElement(members))
+        })
+    }
+    return send(contentNegotiationJson.encodeToString(response))
 }

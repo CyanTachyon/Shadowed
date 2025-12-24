@@ -6,6 +6,7 @@ import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.dataClass.UserId
 import org.jetbrains.exposed.dao.id.CompositeIdTable
 import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.plus
 import org.koin.core.component.get
 
@@ -44,6 +45,11 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
             it[user] = userId
             it[this.key] = key
         }
+    }
+
+    suspend fun removeMember(chatId: ChatId, userId: UserId) = query()
+    {
+        table.deleteWhere { (table.chat eq chatId) and (table.user eq userId) }
     }
 
     suspend fun getUserChats(userId: UserId): List<ChatMember> = query()

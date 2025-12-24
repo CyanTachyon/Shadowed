@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="style.css">
     <script src="crypto.js" defer></script>
     <script src="main.js" defer></script>
+    <script src="utils.js" defer></script>
 </head>
 
 <body>
@@ -30,6 +31,7 @@
                 <h2>注册 / Register</h2>
                 <label for="reg-username"></label><input type="text" id="reg-username" placeholder="用户名 / Username">
                 <label for="reg-password"></label><input type="password" id="reg-password" placeholder="密码 / Password">
+                <label for="reg-password-confirm"></label><input type="password" id="reg-password-confirm" placeholder="确认密码 / Confirm Password">
                 <button class="button" onclick="register()">注册</button>
                 <a class="link" onclick="showLogin()">返回登录 / Back to Login</a>
             </div>
@@ -46,6 +48,7 @@
                         </div>
                         <div id="user-menu" class="dropdown-menu">
                             <div class="menu-item" onclick="triggerAvatarUpload()">Set Avatar</div>
+                            <div class="menu-item" onclick="showResetPasswordModal()">Reset Password</div>
                             <div class="menu-item" onclick="toggleTheme()">Switch Theme</div>
                             <div class="menu-item logout" onclick="logout()">Logout</div>
                         </div>
@@ -68,11 +71,9 @@
             </div>
             <div class="chat-area">
                 <div class="chat-header">
-                    <button class="icon-button mobile-only" onclick="leaveChatView()"
-                        style="margin-right: 10px;">←</button>
+                    <button class="icon-button mobile-only" onclick="history.back()" style="margin-right: 10px;">←</button>
                     <span id="chat-with">Select a friend</span>
-                    <button id="chat-settings-toggle" class="chat-settings-btn" onclick="toggleChatSettings()"
-                        style="display: none;">⚙️</button>
+                    <button id="chat-settings-toggle" class="chat-settings-btn" onclick="toggleChatSettings()" style="display: none;">⚙️</button>
                 </div>
                 <div style="display: flex; flex: 1; overflow: hidden;">
                     <div class="messages" id="messages-container">
@@ -89,9 +90,15 @@
                     </div>
                 </div>
                 <div class="input-area">
-                    <label for="message-input"></label><input type="text" id="message-input" placeholder="Type a message..." disabled onkeypress="handleKeyPress(event)">
-                    <button class="button" onclick="sendImage()" style="width: auto; height: 100%; margin-top: 0;">+</button>
-                    <button class="button" onclick="sendMessage()" style="width: auto; height: 100%; margin-top: 0;">Send</button>
+                    <label for="message-input"></label><input type="text" id="message-input"  placeholder="Type a message..." disabled onkeypress="handleKeyPress(event)" autocomplete="off">
+                    <button class="button" onclick="sendImage()" style="width: 30px; height: 30px; margin-top: 0; display: flex; align-items: center; justify-content: center; padding: 0;" id="media-btn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5"/>
+                            <polyline points="21 15 16 10 5 21"/>
+                        </svg>
+                    </button>
+                    <button class="button" onclick="sendMessage()" style="width: auto; height: 30px; margin-top: 0;" id="send-message-btn">Send</button>
                 </div>
             </div>
         </div>
@@ -110,17 +117,36 @@
     <div id="create-group-modal" class="modal">
         <div class="modal-content">
             <h3>Create Group Chat</h3>
-            <label for="group-name"></label><input type="text" id="group-name" placeholder="Group Name (optional)"
-                                                   style="width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px; background: var(--input-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
+            <label for="group-name"></label><input type="text" id="group-name" placeholder="Group Name (optional)" style="width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px; background: var(--input-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
             <div class="section-title" style="margin-top: 5px;">Select Friends</div>
             <div id="group-members-list">
                 <div style="padding: 10px; text-align: center; color: var(--secondary-color);">Loading friends...</div>
             </div>
             <div style="display: flex; gap: 10px;">
                 <button class="button" onclick="createGroup()">Create</button>
-                <button class="button" onclick="closeGroupModal()"
-                    style="background-color: transparent; color: var(--text-color); border: 1px solid var(--border-color);">Cancel</button>
+                <button class="button" onclick="closeGroupModal()" style="background-color: transparent; color: var(--text-color); border: 1px solid var(--border-color);">Cancel</button>
             </div>
+        </div>
+    </div>
+
+    <div id="reset-password-modal" class="modal">
+        <div class="modal-content">
+            <h3>Reset Password</h3>
+            <label for="reset-password"></label><input type="password" id="reset-password" placeholder="New Password" style="width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px; background: var(--input-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
+            <label for="reset-password-confirm"></label><input type="password" id="reset-password-confirm" placeholder="Confirm New Password" style="width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px; background: var(--input-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
+            <button class="button" onclick="resetPassword()">Reset Password</button>
+            <button class="button" onclick="closeResetPasswordModal()" style="background-color: transparent; color: var(--text-color); border: 1px solid var(--border-color); margin-top: 5px;">Cancel</button>
+        </div>
+    </div>
+
+    <div id="kick-member-modal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin: auto;">Kick Member</h3>
+            <img id="kick-member-avatar" class="user-avatar" src="" alt="Avatar" style="width: 60px; height: 60px; margin: 10px auto;">
+            <div id="kick-member-name" style="font-weight: 500; margin: auto auto 10px;">Member Name</div>
+            <div style="margin-bottom: 15px;" id="kick-member-msg"></div>
+            <button class="button" onclick="" style="background-color: #f85149; color: white; border: 1px solid var(--border-color); margin-top: 5px;" id="confirm-kick-btn">Confirm</button>
+            <button class="button" onclick="closeKickMemberModal()" style="background-color: transparent; color: var(--text-color); border: 1px solid var(--border-color); margin-top: 5px;">Cancel</button>
         </div>
     </div>
 </body>

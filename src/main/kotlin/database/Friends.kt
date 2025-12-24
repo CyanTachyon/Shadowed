@@ -74,13 +74,20 @@ class Friends: SqlDao<Friends.FriendTable>(FriendTable)
     suspend fun getFriends(userId: UserId): List<Pair<UserId, String>> = query()
     {
         val userTable = get<Users>().table
-        val queryA = table.join(userTable, JoinType.INNER, table.userB, userTable.id)
+        val chatTable = get<Chats>().table
+        val queryA = table
+            .join(userTable, JoinType.INNER, table.userB, userTable.id)
+            .join(chatTable, JoinType.INNER, table.chat, chatTable.id)
             .selectAll()
             .where { table.userA eq userId }
+            .orderBy(chatTable.lastChatAt, SortOrder.DESC)
             .map { it[userTable.id].value to it[userTable.username] }
-        val queryB = table.join(userTable, JoinType.INNER, table.userA, userTable.id)
+        val queryB = table
+            .join(userTable, JoinType.INNER, table.userA, userTable.id)
+            .join(chatTable, JoinType.INNER, table.chat, chatTable.id)
             .selectAll()
             .where { table.userB eq userId }
+            .orderBy(chatTable.lastChatAt, SortOrder.DESC)
             .map { it[userTable.id].value to it[userTable.username] }
 
         (queryA + queryB).distinctBy { it.first }
