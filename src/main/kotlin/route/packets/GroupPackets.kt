@@ -1,0 +1,199 @@
+package moe.tachyon.shadowed.route.packets
+
+import io.ktor.server.websocket.*
+import kotlinx.serialization.json.*
+import moe.tachyon.shadowed.contentNegotiationJson
+import moe.tachyon.shadowed.dataClass.ChatId
+import moe.tachyon.shadowed.dataClass.ChatId.Companion.toChatId
+import moe.tachyon.shadowed.dataClass.User
+import moe.tachyon.shadowed.database.ChatMembers
+import moe.tachyon.shadowed.database.Chats
+import moe.tachyon.shadowed.database.Users
+import moe.tachyon.shadowed.route.SessionManager
+import moe.tachyon.shadowed.route.getKoin
+import moe.tachyon.shadowed.route.sendChatDetails
+import moe.tachyon.shadowed.route.sendChatList
+
+object CreateGroupHandler : PacketHandler
+{
+    override val packetName = "create_group"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (groupName, memberUsernames, encryptedKeys) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val name = json.jsonObject["name"]?.jsonPrimitive?.takeUnless { it is JsonNull }?.content ?: "New Group"
+            val members = json.jsonObject["memberUsernames"]!!.jsonArray.map { it.jsonPrimitive.content }
+            val keys = json.jsonObject["encryptedKeys"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
+            Triple(name, members, keys)
+        }.getOrNull() ?: return session.sendError("Create group failed: Invalid packet format")
+
+        // Validate all members exist and get their user objects
+        val users = getKoin().get<Users>()
+        val memberUsers = memberUsernames.mapNotNull()
+        { username ->
+            users.getUserByUsername(username)
+        }
+
+        if (memberUsers.size != memberUsernames.size)
+        {
+            return session.sendError("Create group failed: One or more users not found")
+        }
+
+        // Check all members have keys
+        val missingKeys = memberUsernames.filter { !encryptedKeys.containsKey(it) }
+        if (missingKeys.isNotEmpty())
+        {
+            return session.sendError("Create group failed: Missing keys for: ${missingKeys.joinToString()}")
+        }
+
+        val chats = getKoin().get<Chats>()
+        val chatMembers = getKoin().get<ChatMembers>()
+
+        val chatId = chats.createChat(name = groupName, owner = loginUser.id)
+
+        val creatorKey = encryptedKeys[loginUser.username]
+        if (creatorKey != null)
+            chatMembers.addMember(chatId, loginUser.id, creatorKey)
+        memberUsers.forEach()
+        { user ->
+            val key = encryptedKeys[user.username]
+            if (key != null && user.id != loginUser.id)
+                chatMembers.addMember(chatId, user.id, key)
+        }
+        
+        session.sendInfo("Group created successfully")
+        
+        for (user in memberUsers)
+        {
+            SessionManager.forEachSession(user.id)
+            { s -> s.sendChatList(user.id) }
+        }
+    }
+}
+
+object AddMemberToChatHandler : PacketHandler
+{
+    override val packetName = "add_member_to_chat"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (chatIdVal, username, encryptedKey) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val id = json.jsonObject["chatId"]!!.jsonPrimitive.int
+            val user = json.jsonObject["username"]!!.jsonPrimitive.content
+            val key = json.jsonObject["encryptedKey"]!!.jsonPrimitive.content
+            Triple(id, user, key)
+        }.getOrNull() ?: return session.sendError("Invalid packet format")
+
+        val chatId = ChatId(chatIdVal)
+        
+        // Verify current user is a member of this chat
+        val chatMembers = getKoin().get<ChatMembers>()
+        val isMember = chatMembers.getUserChats(loginUser.id).any { it.chatId == chatId }
+        
+        if (!isMember)
+        {
+            return session.sendError("You are not a member of this chat")
+        }
+
+        // Get target user
+        val targetUser = getKoin().get<Users>().getUserByUsername(username) 
+            ?: return session.sendError("User not found: $username")
+
+        // Check if user is already a member
+        val alreadyMember = chatMembers.getUserChats(targetUser.id).any { it.chatId == chatId }
+        if (alreadyMember)
+        {
+            return session.sendError("$username is already a member")
+        }
+
+        // Add the new member
+        chatMembers.addMember(chatId, targetUser.id, encryptedKey)
+
+        session.sendInfo("Member added successfully")
+
+        val members = chatMembers.getChatMembersDetailed(chatId)
+        val chat = getKoin().get<Chats>().getChat(chatId)!!
+        
+        for (user in members)
+        {
+            SessionManager.forEachSession(user.id)
+            { s -> s.sendChatDetails(chat, members) }
+        }
+        SessionManager.forEachSession(targetUser.id)
+        { s -> s.sendChatList(targetUser.id) }
+    }
+}
+
+object KickMemberFromChatHandler : PacketHandler
+{
+    override val packetName = "kick_member_from_chat"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (chatId, username) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val id = json.jsonObject["chatId"]!!.jsonPrimitive.int.toChatId()
+            val user = json.jsonObject["username"]!!.jsonPrimitive.content
+            Pair(id, user)
+        }.getOrNull() ?: return session.sendError("Invalid packet format")
+        
+        val chats = getKoin().get<Chats>()
+        val chatMembers = getKoin().get<ChatMembers>()
+        val chat = chats.getChat(chatId) ?: return session.sendError("Chat not found")
+        
+        if (chat.private)
+        {
+            val members = chatMembers.getChatMembersDetailed(chatId)
+            if (members.none { it.id == loginUser.id })
+                return session.sendError("You are not a member of this chat")
+            chats.deleteChat(chatId)
+            for (user in members)
+            {
+                SessionManager.forEachSession(user.id)
+                { s -> s.sendChatList(user.id) }
+            }
+            return session.sendInfo("Private chat deleted successfully")
+        }
+        
+        val isOwner = chats.isChatOwner(chatId, loginUser.id)
+        if (!isOwner && loginUser.username != username)
+            return session.sendError("Only owner can kick members")
+        if (isOwner && loginUser.username == username)
+            return session.sendError("As owner, you cannot kick yourself")
+        
+        val targetUser = getKoin().get<Users>().getUserByUsername(username) 
+            ?: return session.sendError("User not found: $username")
+        
+        val members = chatMembers.getChatMembersDetailed(chatId).filterNot { it.id == targetUser.id }
+        if (members.size <= 2)
+            return session.sendError("Cannot kick member: Chat must have at least 3 members")
+        
+        chatMembers.removeMember(chatId, targetUser.id)
+        session.sendInfo("Member kicked successfully")
+        
+        for (user in members)
+        {
+            SessionManager.forEachSession(user.id)
+            { s -> s.sendChatDetails(chat, members) }
+        }
+        SessionManager.forEachSession(targetUser.id)
+        { s -> s.sendChatList(targetUser.id) }
+    }
+}

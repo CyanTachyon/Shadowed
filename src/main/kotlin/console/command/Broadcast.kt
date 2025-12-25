@@ -1,7 +1,7 @@
 package moe.tachyon.shadowed.console.command
 
 import moe.tachyon.shadowed.database.Broadcasts
-import moe.tachyon.shadowed.renewBroadcast
+import moe.tachyon.shadowed.route.renewBroadcast
 import org.jline.reader.Candidate
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get

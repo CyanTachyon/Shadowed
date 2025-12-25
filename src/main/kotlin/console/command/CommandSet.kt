@@ -6,6 +6,7 @@ import moe.tachyon.shadowed.logger.ShadowedLogger
  * Command set.
  */
 object CommandSet: TreeCommand(
+    Notify,
     Broadcast,
     Config,
     Stop,
