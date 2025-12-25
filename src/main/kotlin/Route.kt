@@ -288,11 +288,14 @@ fun Application.router() = routing()
             val userAuth = users.getUserByUsername(username)
             if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
                 return@post call.respond(HttpStatusCode.Unauthorized)
-            val messageId = getKoin().get<Messages>().addChatMessage(
+            if (getKoin().get<ChatMembers>().getUserChats(userAuth.id).none { it.chatId == chat })
+                return@post call.respond(HttpStatusCode.Forbidden)
+            val messages = getKoin().get<Messages>()
+            val messageId = messages.addChatMessage(
                 content = metadata,
                 type = messageType,
                 chatId = chat,
-                senderId = userAuth.id
+                senderId = userAuth.id,
             )
             getKoin().get<Chats>().updateTime(chat)
             getKoin().get<ChatMembers>().incrementUnread(chat, userAuth.id)
@@ -305,11 +308,16 @@ fun Application.router() = routing()
                 }
             )
             distributeMessage(
-                chatId = chat,
-                messageId = messageId,
-                content = metadata,
-                type = messageType,
-                sender = userAuth,
+                Message(
+                    id = messageId,
+                    content = "",
+                    type = messageType,
+                    chatId = chat,
+                    senderId = userAuth.id,
+                    senderName = userAuth.username,
+                    time = Clock.System.now().toEpochMilliseconds(),
+                    isRead = false,
+                )
             )
         }
 
@@ -615,13 +623,15 @@ private fun Route.webSocket() = webSocket("/socket") socket@
 
             if (packetName.equals("send_message", ignoreCase = true))
             {
+                @Serializable
+                data class SendMessage(
+                    val chatId: ChatId,
+                    val message: String,
+                    val type: MessageType,
+                )
                 val (chatId, message, type) = runCatching()
                 {
-                    val json = contentNegotiationJson.parseToJsonElement(packetData)
-                    val cid = json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
-                    val msg = json.jsonObject["message"]!!.jsonPrimitive.content
-                    val t = json.jsonObject["type"]!!.jsonPrimitive.content.let(MessageType::fromString)
-                    Triple(cid, msg, t)
+                    contentNegotiationJson.decodeFromString<SendMessage>(packetData)
                 }.getOrNull() ?: return@collect send(
                     contentNegotiationJson.encodeToString(
                         NotifyPacket(
@@ -649,11 +659,16 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                 getKoin().get<ChatMembers>().incrementUnread(chatId, loginUser.id)
                 getKoin().get<ChatMembers>().resetUnread(chatId, loginUser.id)
                 distributeMessage(
-                    chatId = chatId,
-                    messageId = msgId,
-                    content = message,
-                    type = type,
-                    sender = loginUser,
+                    Message(
+                        id = msgId,
+                        content = message,
+                        type = type,
+                        chatId = chatId,
+                        senderId = loginUser.id,
+                        senderName = loginUser.username,
+                        time = Clock.System.now().toEpochMilliseconds(),
+                        isRead = false,
+                    )
                 )
             }
 
@@ -826,14 +841,10 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                 val members = chatMembers.getChatMembersDetailed(chatId)
                 val chat = getKoin().get<Chats>().getChat(chatId)!!
                 for (user in members)
-                    for (s in sessionsMutex.withLock { sessions[user.id]?.toList() ?: emptyList() }) runCatching()
-                    {
-                        s.sendChatDetails(chat, members)
-                    }
-                for (s in sessionsMutex.withLock { sessions[targetUser.id]?.toList() ?: emptyList() }) runCatching()
-                {
-                    s.sendChatList(targetUser.id)
-                }
+                    for (s in sessionsMutex.withLock { sessions[user.id]?.toList() ?: emptyList() })
+                        runCatching { s.sendChatDetails(chat, members) }
+                for (s in sessionsMutex.withLock { sessions[targetUser.id]?.toList() ?: emptyList() })
+                    runCatching { s.sendChatList(targetUser.id) }
             }
 
             if (packetName.equals("kick_member_from_chat", ignoreCase = true))
@@ -850,6 +861,30 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                     )
                 )
                 val chats = getKoin().get<Chats>()
+                val chatMembers = getKoin().get<ChatMembers>()
+                val chat = chats.getChat(chatId) ?: return@collect send(
+                    contentNegotiationJson.encodeToString(
+                        NotifyPacket(NotifyPacket.Type.ERROR, "Chat not found")
+                    )
+                )
+                if (chat.private)
+                {
+                    val members = chatMembers.getChatMembersDetailed(chatId)
+                    if (members.none { it.id == loginUser.id }) return@collect send(
+                        contentNegotiationJson.encodeToString(
+                            NotifyPacket(NotifyPacket.Type.ERROR, "You are not a member of this chat")
+                        )
+                    )
+                    chats.deleteChat(chatId)
+                    for (user in members)
+                        for (s in sessionsMutex.withLock { sessions[user.id]?.toList() ?: emptyList() })
+                            runCatching { s.sendChatList(user.id) }
+                    return@collect send(
+                        contentNegotiationJson.encodeToString(
+                            NotifyPacket(NotifyPacket.Type.INFO, "Private chat deleted successfully")
+                        )
+                    )
+                }
                 val isOwner = chats.isChatOwner(chatId, loginUser.id)
                 if (!isOwner && loginUser.username != username) return@collect send(
                     contentNegotiationJson.encodeToString(
@@ -861,8 +896,6 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                         NotifyPacket(NotifyPacket.Type.ERROR, "As owner, you cannot kick yourself")
                     )
                 )
-
-                val chatMembers = getKoin().get<ChatMembers>()
                 val targetUser = getKoin().get<Users>().getUserByUsername(username) ?: return@collect send(
                     contentNegotiationJson.encodeToString(
                         NotifyPacket(NotifyPacket.Type.ERROR, "User not found: $username")
@@ -880,18 +913,11 @@ private fun Route.webSocket() = webSocket("/socket") socket@
                         NotifyPacket(NotifyPacket.Type.INFO, "Member kicked successfully")
                     )
                 )
-                val chat = chats.getChat(chatId)!!
                 for (user in members)
-                {
-                    for (s in sessionsMutex.withLock { sessions[user.id]?.toList() ?: emptyList() }) runCatching()
-                    {
-                        s.sendChatDetails(chat, members)
-                    }
-                }
-                for (s in sessionsMutex.withLock { sessions[targetUser.id]?.toList() ?: emptyList() }) runCatching()
-                {
-                    s.sendChatList(targetUser.id)
-                }
+                    for (s in sessionsMutex.withLock { sessions[user.id]?.toList() ?: emptyList() })
+                        runCatching { s.sendChatDetails(chat, members) }
+                for (s in sessionsMutex.withLock { sessions[targetUser.id]?.toList() ?: emptyList() })
+                    runCatching { s.sendChatList(targetUser.id) }
             }
 
             if (packetName.equals("send_broadcast", ignoreCase = true))
@@ -988,33 +1014,18 @@ private suspend fun WebSocketSession.sendUnreadCount(userId: UserId, chatId: Cha
     return send(contentNegotiationJson.encodeToString(response))
 }
 
-private suspend fun distributeMessage(
-    chatId: ChatId,
-    messageId: Long,
-    content: String,
-    type: MessageType,
-    sender: User,
-)
+private suspend fun distributeMessage(message: Message)
 {
-    val members = getKoin().get<ChatMembers>().getMemberIds(chatId)
+    val members = getKoin().get<ChatMembers>().getMemberIds(message.chatId)
     members.forEach()
     { uid ->
         for (s in sessionsMutex.withLock { sessions[uid]?.toList() ?: emptyList() })
         {
-            s.sendUnreadCount(uid, chatId)
+            s.sendUnreadCount(uid, message.chatId)
             val pushData = buildJsonObject()
             {
                 put("packet", "receive_message")
-                put("message", buildJsonObject()
-                {
-                    put("id", messageId)
-                    put("content", content)
-                    put("type", type.name)
-                    put("chatId", chatId.value)
-                    put("senderId", sender.id.value)
-                    put("senderName", sender.username)
-                    put("time", Clock.System.now().toEpochMilliseconds())
-                })
+                put("message", contentNegotiationJson.encodeToJsonElement(message))
             }
             logger.warning("sending message to $uid")
             {

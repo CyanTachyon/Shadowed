@@ -7,7 +7,9 @@ import moe.tachyon.shadowed.dataClass.UserId
 import moe.tachyon.shadowed.database.Users.UserTable
 import org.jetbrains.exposed.dao.id.IdTable
 import org.jetbrains.exposed.sql.ReferenceOption
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insertAndGetId
 import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
 import org.jetbrains.exposed.sql.selectAll
@@ -71,5 +73,10 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
         {
             it[lastChatAt] = Clock.System.now()
         }
+    }
+
+    suspend fun deleteChat(chatId: ChatId) = query()
+    {
+        table.deleteWhere { table.id eq chatId }
     }
 }
