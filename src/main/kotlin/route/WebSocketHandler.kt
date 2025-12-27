@@ -16,6 +16,7 @@ private val packetHandlers: Map<String, PacketHandler> = listOf(
     GetChatsHandler,
     GetMessagesHandler,
     SendMessageHandler,
+    EditMessageHandler,
     GetChatDetailsHandler,
     RenameChatHandler,
     SetDoNotDisturb,

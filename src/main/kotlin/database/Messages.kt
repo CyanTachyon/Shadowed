@@ -8,9 +8,12 @@ import moe.tachyon.shadowed.dataClass.UserId
 import org.jetbrains.exposed.dao.id.LongIdTable
 import org.jetbrains.exposed.sql.ReferenceOption
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insertAndGetId
 import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
 import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.update
 
 class Messages: SqlDao<Messages.MessageTable>(MessageTable)
 {
@@ -68,5 +71,38 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
                 )
             }
             .reversed()
+    }
+
+    suspend fun updateMessage(
+        messageId: Long,
+        newContent: String?
+    ): Unit = query()
+    {
+        if (newContent == null) table.deleteWhere { table.id eq messageId }
+        else table.update({ table.id eq messageId })
+        {
+            it[table.content] = newContent
+        }
+    }
+
+    suspend fun getMessage(messageId: Long): Message? = query()
+    {
+        val usersTable = getKoin().get<Users>().table
+        (table innerJoin usersTable)
+            .selectAll()
+            .where { table.id eq messageId }
+            .map {
+                Message(
+                    id = it[table.id].value,
+                    content = it[table.content],
+                    type = it[table.type],
+                    chatId = it[table.chat].value,
+                    senderId = it[table.sender].value,
+                    senderName = it[usersTable.username],
+                    time = it[table.time].toEpochMilliseconds(),
+                    isRead = it[table.isRead],
+                )
+            }
+            .firstOrNull()
     }
 }

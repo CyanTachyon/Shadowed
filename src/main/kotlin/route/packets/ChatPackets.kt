@@ -35,14 +35,13 @@ object GetMessagesHandler: PacketHandler
     )
     {
         val (chatId, begin, count) = runCatching()
-                                     {
-                                         val json = contentNegotiationJson.parseToJsonElement(packetData)
-                                         val cid = json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
-                                         val start = json.jsonObject["begin"]!!.jsonPrimitive.long
-                                         val limit = json.jsonObject["count"]!!.jsonPrimitive.int
-                                         Triple(cid, start, limit)
-                                     }.getOrNull()
-                                     ?: return session.sendError("Get messages failed: Invalid packet format")
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val cid = json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
+            val start = json.jsonObject["begin"]!!.jsonPrimitive.long
+            val limit = json.jsonObject["count"]!!.jsonPrimitive.int
+            Triple(cid, start, limit)
+        }.getOrNull() ?: return session.sendError("Get messages failed: Invalid packet format")
 
         if (getKoin().get<ChatMembers>().getUserChats(loginUser.id).none { it.chatId == chatId })
             return session.sendError("Get messages failed: You are not a member of this chat")
@@ -189,5 +188,44 @@ object SetDoNotDisturb: PacketHandler
             return session.sendError("You are not a member of this chat")
         session.sendInfo("Do Not Disturb set to $doNotDisturb")
         session.sendChatList(loginUser.id)
+    }
+}
+
+object EditMessageHandler: PacketHandler
+{
+    override val packetName = "edit_message"
+
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        @Serializable
+        data class EditMessage(
+            val messageId: Long,
+            val message: String?,
+        )
+        val (messageId, newContent) = runCatching()
+        {
+            contentNegotiationJson.decodeFromString<EditMessage>(packetData)
+        }.getOrNull() ?: return session.sendError("Edit message failed: Invalid packet format")
+
+        val messages = getKoin().get<Messages>()
+        val originalMessage = messages.getMessage(messageId)
+            ?: return session.sendError("Edit message failed: Message not found")
+
+        if (originalMessage.senderId != loginUser.id)
+            return session.sendError("Edit message failed: You can only edit your own messages")
+
+        if (getKoin().get<ChatMembers>().getUserChats(loginUser.id).none { it.chatId == originalMessage.chatId })
+            return session.sendError("Edit message failed: You are not a member of this chat")
+
+        messages.updateMessage(messageId, newContent)
+
+        distributeMessage(originalMessage.copy(
+            content = newContent ?: "",
+            type = if (newContent == null) MessageType.TEXT else originalMessage.type,
+        ))
     }
 }

@@ -14,6 +14,7 @@ import moe.tachyon.shadowed.utils.FileUtils
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import javax.imageio.ImageIO
 
 private val logger = ShadowedLogger.getLogger()
@@ -78,16 +79,21 @@ fun Route.userRoute()
 
             val avatarImage = FileUtils.getAvatar(UserId(id))
 
-            call.response.header(HttpHeaders.CacheControl, "max-age=300")
+            call.response.header(HttpHeaders.CacheControl, "public, max-age=300")
             if (avatarImage != null)
             {
-                call.respondOutputStream(ContentType.Image.PNG)
-                {
-                    ImageIO.write(avatarImage, "png", this)
-                }
+                val bytes = ByteArrayOutputStream().also { ImageIO.write(avatarImage, "png", it) }.toByteArray()
+                val hash = bytes.contentHashCode().toString()
+                if (call.request.headers[HttpHeaders.IfNoneMatch] == hash)
+                    return@get call.respond(HttpStatusCode.NotModified)
+                call.response.header(HttpHeaders.ETag, hash)
+                call.respondBytes(bytes, contentType = ContentType.Image.PNG)
             }
             else
             {
+                if (call.request.headers[HttpHeaders.IfNoneMatch] == "default_avatar")
+                    return@get call.respond(HttpStatusCode.NotModified)
+                call.response.header(HttpHeaders.ETag, "default_avatar")
                 call.respondText("""
                     <svg width="100" height="100" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
                       <rect x="0" y="0" width="64" height="64" rx="16" fill="#E3F2FD"/>
