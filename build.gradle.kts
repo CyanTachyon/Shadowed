@@ -7,8 +7,8 @@ val swagger_ui_version: String by project
 val schema_kenerator_version: String by project
 
 plugins {
-    kotlin("jvm") version "2.3.0-RC2"
-    kotlin("plugin.serialization") version "2.3.0-RC2"
+    kotlin("jvm") version "2.3.0"
+    kotlin("plugin.serialization") version "2.3.0"
     id("io.ktor.plugin") version "3.3.2"
 }
 
@@ -94,6 +94,7 @@ kotlin {
         freeCompilerArgs.add("-Xdata-flow-based-exhaustiveness")
         freeCompilerArgs.add("-Xallow-reified-type-in-catch")
         freeCompilerArgs.add("-Xallow-holdsin-contract")
+        freeCompilerArgs.add("-Xexplicit-backing-fields")
     }
 }
 

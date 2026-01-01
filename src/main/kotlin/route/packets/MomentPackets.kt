@@ -290,8 +290,7 @@ object GetMomentPermissionHandler : PacketHandler
         val chats = getKoin().get<Chats>()
         val chatMembers = getKoin().get<ChatMembers>()
 
-        if (!friends.areFriends(loginUser.id, friendId))
-            return session.sendError("User is not your friend")
+        if (!friends.areFriends(loginUser.id, friendId)) return
 
         // If encryptedKey is provided, add friend as viewer
         if (encryptedKey != null)

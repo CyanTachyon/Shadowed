@@ -116,5 +116,33 @@ fun Route.userRoute()
             }
             call.respond(response)
         }
+
+        get("/info")
+        {
+            val idStr = call.parameters["id"]
+            val id = idStr?.toIntOrNull()
+
+            if (id == null)
+            {
+                call.respond(HttpStatusCode.BadRequest)
+                return@get
+            }
+
+            val user = getKoin().get<Users>().getUser(UserId(id))
+
+            if (user == null)
+            {
+                call.respond(HttpStatusCode.NotFound)
+                return@get
+            }
+
+            val response = buildJsonObject()
+            {
+                put("id", user.id.value)
+                put("username", user.username)
+                put("signature", user.signature)
+            }
+            call.respond(response)
+        }
     }
 }
