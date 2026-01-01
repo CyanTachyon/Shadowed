@@ -12,4 +12,5 @@ data class ChatMember(
     val isPrivate: Boolean,
     val unreadCount: Int,
     val doNotDisturb: Boolean,
+    val burnTime: Long? = null, // 阅后即焚时间（毫秒），null表示关闭
 )

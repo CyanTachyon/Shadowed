@@ -11,6 +11,6 @@ data class Message(
     val senderId: UserId,
     val senderName: String,
     val time: Long,
-    val isRead: Boolean,
+    val readAt: Long? = null, // 已读时间戳，null表示未读
     val replyTo: ReplyInfo? = null
 )

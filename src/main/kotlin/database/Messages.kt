@@ -7,11 +7,16 @@ import moe.tachyon.shadowed.dataClass.Message
 import moe.tachyon.shadowed.dataClass.MessageType
 import moe.tachyon.shadowed.dataClass.ReplyInfo
 import moe.tachyon.shadowed.dataClass.UserId
+import moe.tachyon.shadowed.database.utils.CustomExpression
+import moe.tachyon.shadowed.database.utils.CustomExpressionWithColumnType
 import moe.tachyon.shadowed.database.utils.singleOrNull
+import moe.tachyon.shadowed.logger.ShadowedLogger
 import org.jetbrains.exposed.dao.id.LongIdTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.kotlin.datetime.KotlinInstantColumnType
 import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
+import org.jetbrains.exposed.sql.kotlin.datetime.timestampWithTimeZone
 
 class Messages: SqlDao<Messages.MessageTable>(MessageTable)
 {
@@ -23,7 +28,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
         val chat = reference("chat", Chats.ChatTable, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE).index()
         val sender = reference("sender", Users.UserTable, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE).index()
         val replyTo = reference("reply_to", MessageTable, onDelete = ReferenceOption.SET_NULL, onUpdate = ReferenceOption.CASCADE).nullable().index()
-        val isRead = bool("is_read").default(false)
+        val readAt = timestamp("read_at").nullable().index().default(null)
     }
 
     suspend fun addChatMessage(
@@ -39,7 +44,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
             it[table.type] = type
             it[table.chat] = chatId
             it[table.sender] = senderId
-            it[table.isRead] = false
+            it[table.readAt] = null
             it[table.replyTo] = null
             it[table.time] = Clock.System.now()
         }.value
@@ -63,7 +68,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
             it[table.type] = type
             it[table.chat] = chatId
             it[table.sender] = senderId
-            it[table.isRead] = false
+            it[table.readAt] = null
             it[table.replyTo] = replyToMessageId
             it[table.time] = Clock.System.now()
         }.value
@@ -107,7 +112,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
                     senderId = it[table.sender].value,
                     senderName = it[usersTable.username],
                     time = it[table.time].toEpochMilliseconds(),
-                    isRead = it[table.isRead],
+                    readAt = it[table.readAt]?.toEpochMilliseconds(),
                     replyTo = replyInfo
                 )
             }
@@ -158,7 +163,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
                     senderId = it[table.sender].value,
                     senderName = it[usersTable.username],
                     time = it[table.time].toEpochMilliseconds(),
-                    isRead = it[table.isRead],
+                    readAt = it[table.readAt]?.toEpochMilliseconds(),
                     replyTo = replyInfo
                 )
             }
@@ -241,5 +246,61 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
             {
                 it[chatTable.name] to it[table.id.count()]
             }
+    }
+
+    // ====== Burn after read methods ======
+
+    /**
+     * Mark a message as read and return the updated message
+     * @return The updated message, or null if not found
+     */
+    suspend fun markAsRead(messageId: Long): Message? = query()
+    {
+        val now = Clock.System.now()
+        table.update({ (table.id eq messageId) and (table.readAt.isNull()) })
+        {
+            it[readAt] = now
+        }
+        // Return the updated message
+        null // Will be fetched by getMessage after this
+    }
+
+    /**
+     * Data class for expired message info (minimal data needed for deletion and notification)
+     */
+    data class ExpiredMessageInfo(
+        val messageId: Long,
+        val chatId: ChatId,
+    )
+
+    /**
+     * Get expired message IDs that should be deleted (readAt + burnTime < now)
+     * Only for private chats with burn time enabled
+     * Uses SQL-level time comparison for efficiency
+     */
+    suspend fun getExpiredMessageIds(): List<ExpiredMessageInfo> = query()
+    {
+        val chatTable = getKoin().get<Chats>().table
+        table
+            .innerJoin(chatTable, { this@Messages.table.chat }, { chatTable.id })
+            .select(table.id, table.chat)
+            .andWhere { chatTable.private eq true }
+            .andWhere { chatTable.burnTime.isNotNull() }
+            .andWhere { table.readAt.isNotNull() }
+            .andWhere { CustomExpressionWithColumnType("${table.readAt.name} + ${chatTable.burnTime.name} * INTERVAL '1 millisecond'", KotlinInstantColumnType()) less Clock.System.now() }
+            .map { row ->
+                ExpiredMessageInfo(
+                    messageId = row[table.id].value,
+                    chatId = row[table.chat].value,
+                )
+            }
+    }
+
+    /**
+     * Delete a message by ID
+     */
+    suspend fun deleteMessage(messageId: Long): Unit = query()
+    {
+        table.deleteWhere { table.id eq messageId }
     }
 }

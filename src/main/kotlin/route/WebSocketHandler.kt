@@ -20,6 +20,8 @@ private val packetHandlers: Map<String, PacketHandler> = listOf(
     GetChatDetailsHandler,
     RenameChatHandler,
     SetDoNotDisturb,
+    SetBurnTimeHandler,
+    MarkMessageReadHandler,
     // Friend packets
     GetFriendsHandler,
     AddFriendHandler,

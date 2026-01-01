@@ -59,4 +59,9 @@ object FileUtils
             chatFile.inputStream()
         }
     }.getOrNull()
+
+    suspend fun cleanupChatFiles()
+    {
+
+    }
 }

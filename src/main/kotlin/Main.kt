@@ -17,6 +17,7 @@ import moe.tachyon.shadowed.plugin.koin.installKoin
 import moe.tachyon.shadowed.plugin.sse.installSSE
 import moe.tachyon.shadowed.plugin.statusPages.installStatusPages
 import moe.tachyon.shadowed.plugin.webSockets.installWebSockets
+import moe.tachyon.shadowed.service.BurnAfterReadService
 import moe.tachyon.shadowed.utils.Power
 import java.io.File
 import kotlin.properties.Delegates
@@ -137,6 +138,9 @@ fun Application.init()
 
     // install database
     SqlDatabase.apply { this@init.init() }
+
+    // Start burn-after-read message cleanup service
+    BurnAfterReadService.start()
 
     // router
     router()

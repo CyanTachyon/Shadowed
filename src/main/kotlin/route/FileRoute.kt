@@ -74,7 +74,7 @@ fun Route.fileRoute()
                 senderId = userAuth.id,
                 senderName = userAuth.username,
                 time = Clock.System.now().toEpochMilliseconds(),
-                isRead = false,
+                readAt = null,
             )
         )
     }

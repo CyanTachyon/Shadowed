@@ -268,3 +268,91 @@ object EditMessageHandler: PacketHandler
         ))
     }
 }
+object SetBurnTimeHandler: PacketHandler
+{
+    override val packetName = "set_burn_time"
+
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (chatId, burnTime) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val id = json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
+            val time = json.jsonObject["burnTime"]?.jsonPrimitive?.longOrNull
+            id to time
+        }.getOrNull() ?: return session.sendError("Set burn time failed: Invalid packet format")
+
+        val chats = getKoin().get<Chats>()
+        val chatMembers = getKoin().get<ChatMembers>()
+
+        // Check if user is a member of this chat
+        if (!chatMembers.isMember(chatId, loginUser.id))
+            return session.sendError("Set burn time failed: You are not a member of this chat")
+
+        // Check if this is a private chat
+        val chat = chats.getChat(chatId)
+            ?: return session.sendError("Set burn time failed: Chat not found")
+        if (!chat.private)
+            return session.sendError("Set burn time failed: Burn after read is only available for private chats")
+
+        // Set burn time
+        chats.setBurnTime(chatId, burnTime)
+
+        // Notify all members of the chat to refresh their chat list
+        val members = chatMembers.getMemberIds(chatId)
+        members.forEach { uid ->
+            SessionManager.forEachSession(uid) { s ->
+                s.sendChatList(uid)
+            }
+        }
+
+        session.sendInfo(if (burnTime != null) "Burn time set to ${burnTime / 1000} seconds" else "Burn after read disabled")
+    }
+}
+
+object MarkMessageReadHandler: PacketHandler
+{
+    override val packetName = "mark_message_read"
+
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val messageId = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            json.jsonObject["messageId"]!!.jsonPrimitive.long
+        }.getOrNull() ?: return session.sendError("Mark message read failed: Invalid packet format")
+
+        val messages = getKoin().get<Messages>()
+        val chatMembers = getKoin().get<ChatMembers>()
+
+        // Get the message
+        val message = messages.getMessage(messageId)
+            ?: return // Message not found, silently ignore
+
+        // Check if user is a member of this chat
+        if (!chatMembers.isMember(message.chatId, loginUser.id))
+            return // Not a member, silently ignore
+
+        // Only mark as read if it's not sent by the current user and not already read
+        if (message.senderId == loginUser.id || message.readAt != null)
+            return // Own message or already read, silently ignore
+
+        // Mark the message as read
+        messages.markAsRead(messageId)
+
+        // Fetch the updated message and distribute to all members
+        val updatedMessage = messages.getMessage(messageId)
+        if (updatedMessage != null)
+        {
+            distributeMessage(updatedMessage)
+        }
+    }
+}

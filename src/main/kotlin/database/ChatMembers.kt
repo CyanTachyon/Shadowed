@@ -68,6 +68,7 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
             
             val isPrivate = chatRow?.get(Chats.ChatTable.private) ?: false
             val chatName = chatRow?.get(Chats.ChatTable.name)
+            val burnTime = chatRow?.get(Chats.ChatTable.burnTime)
             val myKey = row[table.key]
             val otherMembersInfo = table.selectAll().where { (table.chat eq chatId) and (table.user neq userId) }
                 .map { mRow ->
@@ -97,7 +98,8 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
                 parsedOtherIds = parsedOtherIds,
                 isPrivate = isPrivate,
                 unreadCount = row[table.unread],
-                doNotDisturb = row[table.doNotDisturb]
+                doNotDisturb = row[table.doNotDisturb],
+                burnTime = burnTime
             )
         }
         val chatTable =  get<Chats>().table

@@ -1,6 +1,8 @@
 package moe.tachyon.shadowed.database
 
 import kotlinx.datetime.Clock
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import moe.tachyon.shadowed.dataClass.Chat
 import moe.tachyon.shadowed.dataClass.ChatId
 import moe.tachyon.shadowed.dataClass.UserId
@@ -13,8 +15,10 @@ import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insertAndGetId
 import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
+import org.jetbrains.exposed.sql.kotlin.datetime.timestampWithTimeZone
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.update
+import java.time.OffsetDateTime
 
 class Chats: SqlDao<Chats.ChatTable>(ChatTable)
 {
@@ -27,6 +31,7 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
         val private = bool("private")
         val isMoment = bool("is_moment").default(false)
         val lastChatAt = timestamp("last_chat_at").clientDefault { Clock.System.now() }
+        val burnTime = long("burn_time").nullable().default(null) // 阅后即焚时间（毫秒），null表示关闭
         init
         {
             uniqueIndex(owner) { isMoment eq true }
@@ -57,6 +62,7 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
                 private = it[table.private],
                 isMoment = it[table.isMoment],
                 lastChatAt = it[table.lastChatAt],
+                burnTime = it[table.burnTime],
             )
         }
     }
@@ -85,6 +91,26 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
     suspend fun deleteChat(chatId: ChatId) = query()
     {
         table.deleteWhere { table.id eq chatId }
+    }
+
+    /**
+     * Set burn time for a chat (private chats only)
+     * @param burnTime Time in milliseconds after read to delete message, null to disable
+     */
+    suspend fun setBurnTime(chatId: ChatId, burnTime: Long?) = query()
+    {
+        table.update({ table.id eq chatId })
+        {
+            it[this.burnTime] = burnTime
+        }
+    }
+
+    /**
+     * Get burn time for a chat
+     */
+    suspend fun getBurnTime(chatId: ChatId): Long? = query()
+    {
+        table.selectAll().where { table.id eq chatId }.singleOrNull()?.get(table.burnTime)
     }
 
     // ====== Moment-related methods ======
@@ -131,6 +157,7 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
                 private = it[table.private],
                 isMoment = it[table.isMoment],
                 lastChatAt = it[table.lastChatAt],
+                burnTime = it[table.burnTime],
             )
         }
     }
