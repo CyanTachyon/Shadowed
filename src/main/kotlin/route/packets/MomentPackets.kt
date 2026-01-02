@@ -27,6 +27,7 @@ data class MomentItem(
     val ownerName: String,
     val time: Long,
     val key: String, // Encrypted key for decryption
+    val ownerIsDonor: Boolean = false
 )
 
 /**
@@ -64,7 +65,8 @@ object GetMomentsHandler : PacketHandler
                 ownerId = msg.ownerId,
                 ownerName = msg.ownerName,
                 time = msg.time,
-                key = msg.key
+                key = msg.key,
+                ownerIsDonor = msg.ownerIsDonor
             )
         }
 

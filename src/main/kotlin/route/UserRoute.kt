@@ -141,6 +141,7 @@ fun Route.userRoute()
                 put("id", user.id.value)
                 put("username", user.username)
                 put("signature", user.signature)
+                put("isDonor", user.isDonor)
             }
             call.respond(response)
         }

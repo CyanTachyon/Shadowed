@@ -9,5 +9,6 @@ data class Broadcast(
     val time: Long,
     val senderId: UserId?,
     val senderName: String?,
-    val system: Boolean
+    val system: Boolean,
+    val senderIsDonor: Boolean = false
 )

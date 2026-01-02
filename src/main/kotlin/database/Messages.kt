@@ -2,14 +2,21 @@ package moe.tachyon.shadowed.database
 
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
-import moe.tachyon.shadowed.dataClass.*
+import moe.tachyon.shadowed.dataClass.ChatId
+import moe.tachyon.shadowed.dataClass.Message
+import moe.tachyon.shadowed.dataClass.MessageType
+import moe.tachyon.shadowed.dataClass.ReplyInfo
+import moe.tachyon.shadowed.dataClass.UserId
+import moe.tachyon.shadowed.database.utils.CustomExpression
 import moe.tachyon.shadowed.database.utils.CustomExpressionWithColumnType
 import moe.tachyon.shadowed.database.utils.singleOrNull
+import moe.tachyon.shadowed.logger.ShadowedLogger
 import org.jetbrains.exposed.dao.id.LongIdTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.kotlin.datetime.KotlinInstantColumnType
 import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
+import org.jetbrains.exposed.sql.kotlin.datetime.timestampWithTimeZone
 
 class Messages: SqlDao<Messages.MessageTable>(MessageTable)
 {
@@ -106,7 +113,8 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
                     senderName = it[usersTable.username],
                     time = it[table.time].toEpochMilliseconds(),
                     readAt = it[table.readAt]?.toEpochMilliseconds(),
-                    replyTo = replyInfo
+                    replyTo = replyInfo,
+                    senderIsDonor = it[usersTable.isDonor]
                 )
             }
             .reversed()
@@ -157,7 +165,8 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
                     senderName = it[usersTable.username],
                     time = it[table.time].toEpochMilliseconds(),
                     readAt = it[table.readAt]?.toEpochMilliseconds(),
-                    replyTo = replyInfo
+                    replyTo = replyInfo,
+                    senderIsDonor = it[usersTable.isDonor]
                 )
             }
     }
@@ -173,6 +182,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
         val ownerName: String,
         val time: Long,
         val key: String,
+        val ownerIsDonor: Boolean = false
     )
 
     /**
@@ -212,6 +222,7 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
                     ownerName = it[usersTable.username],
                     time = it[table.time].toEpochMilliseconds(),
                     key = it[chatMembersTable.key],
+                    ownerIsDonor = it[usersTable.isDonor]
                 )
             }
     }
@@ -358,7 +369,8 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
                     senderName = it[usersTable.username],
                     time = it[table.time].toEpochMilliseconds(),
                     readAt = it[table.readAt]?.toEpochMilliseconds(),
-                    replyTo = replyInfo
+                    replyTo = replyInfo,
+                    senderIsDonor = it[usersTable.isDonor]
                 )
             }
     }

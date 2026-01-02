@@ -73,12 +73,15 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
             val otherMembersInfo = table.selectAll().where { (table.chat eq chatId) and (table.user neq userId) }
                 .map { mRow ->
                     val uid = mRow[table.user].value
-                    val uname = Users.UserTable.selectAll().where { Users.UserTable.id eq uid }.single()[Users.UserTable.username]
-                    Pair(uid, uname)
+                    val userRow = Users.UserTable.selectAll().where { Users.UserTable.id eq uid }.single()
+                    val uname = userRow[Users.UserTable.username]
+                    val isDonor = userRow[Users.UserTable.isDonor]
+                    Triple(uid, uname, isDonor)
                 }
             
             val parsedOtherNames = otherMembersInfo.map { it.second }
             val parsedOtherIds = otherMembersInfo.map { it.first.value }
+            val otherUserIsDonor = otherMembersInfo.firstOrNull()?.third ?: false
 
             // For private chats, use the other person's name instead of chat name
             val displayName = if (isPrivate && parsedOtherNames.isNotEmpty())
@@ -99,7 +102,8 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
                 isPrivate = isPrivate,
                 unreadCount = row[table.unread],
                 doNotDisturb = row[table.doNotDisturb],
-                burnTime = burnTime
+                burnTime = burnTime,
+                otherUserIsDonor = otherUserIsDonor
             )
         }
         val chatTable =  get<Chats>().table
@@ -128,7 +132,8 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
                     password = "",
                     publicKey = "",
                     privateKey = "",
-                    signature = row[uTable.signature]
+                    signature = row[uTable.signature],
+                    isDonor = row[uTable.isDonor]
                 )
             }
     }

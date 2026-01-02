@@ -13,4 +13,5 @@ data class ChatMember(
     val unreadCount: Int,
     val doNotDisturb: Boolean,
     val burnTime: Long? = null, // 阅后即焚时间（毫秒），null表示关闭
+    val otherUserIsDonor: Boolean = false // 私聊对方是否是捐赠者（仅私聊有效）
 )

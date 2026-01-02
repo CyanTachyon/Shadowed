@@ -2,8 +2,11 @@ package moe.tachyon.shadowed.route
 
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.put
+import moe.tachyon.shadowed.contentNegotiationJson
 
 fun Route.configRoute()
 {
@@ -38,6 +41,10 @@ fun Route.configRoute()
         val donationWechat = environment.config.propertyOrNull("donation.wechatQrCode")?.getString()
         val donationAlipay = environment.config.propertyOrNull("donation.alipayQrCode")?.getString()
 
+        // Get all donors
+        val users = getKoin().get<moe.tachyon.shadowed.database.Users>()
+        val donors = users.getAllDonors()
+
         call.respond(
             buildJsonObject()
             {
@@ -54,6 +61,17 @@ fun Route.configRoute()
                 {
                     donationWechat?.let { put("wechatQrCode", it) }
                     donationAlipay?.let { put("alipayQrCode", it) }
+                })
+                put("donors", buildJsonArray()
+                {
+                    donors.forEach { donor ->
+                        addJsonObject()
+                        {
+                            put("id", donor.id.value)
+                            put("username", donor.username)
+                            put("isDonor", donor.isDonor)
+                        }
+                    }
                 })
             }
         )

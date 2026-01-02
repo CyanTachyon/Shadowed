@@ -106,6 +106,7 @@ suspend fun WebSocketSession.sendChatDetails(chat: Chat, members: List<User>)
                     {
                         put("id", member.id.value)
                         put("username", member.username)
+                        put("isDonor", member.isDonor)
                         // Only include signature for private chats
                         if (chat.private) put("signature", member.signature)
                     }

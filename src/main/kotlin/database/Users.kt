@@ -5,6 +5,7 @@ import moe.tachyon.shadowed.dataClass.UserId
 import moe.tachyon.shadowed.database.utils.singleOrNull
 import org.jetbrains.exposed.dao.id.IdTable
 import org.jetbrains.exposed.sql.ResultRow
+import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.insertIgnoreAndGetId
 import org.jetbrains.exposed.sql.lowerCase
 import org.jetbrains.exposed.sql.selectAll
@@ -25,6 +26,7 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         val publicKey = text("public_key")
         val privateKey = text("private_key")
         val signature = text("signature").default("")
+        val isDonor = bool("is_donor").default(false)
     }
 
     private fun deserialize(row: ResultRow): User = User(
@@ -34,6 +36,7 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         publicKey = row[table.publicKey],
         privateKey = row[table.privateKey],
         signature = row[table.signature],
+        isDonor = row[table.isDonor],
     )
 
     suspend fun createUser(
@@ -81,5 +84,10 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         {
             it[signature] = newSignature
         }
+    }
+
+    suspend fun getAllDonors(): List<User> = query()
+    {
+        table.selectAll().where { table.isDonor eq true }.orderBy(table.id to SortOrder.ASC).map(::deserialize)
     }
 }

@@ -71,6 +71,7 @@ class Broadcasts: SqlDao<Broadcasts.BroadcastTable>(BroadcastTable)
                     content = it[table.content],
                     system = it[table.system],
                     time = it[table.time].toEpochMilliseconds(),
+                    senderIsDonor = it.getOrNull(Users.UserTable.isDonor) ?: false
                 )
             }
     }
@@ -98,6 +99,7 @@ class Broadcasts: SqlDao<Broadcasts.BroadcastTable>(BroadcastTable)
                     content = it[table.content],
                     system = it[table.system],
                     time = it[table.time].toEpochMilliseconds(),
+                    senderIsDonor = it.getOrNull(Users.UserTable.isDonor) ?: false
                 )
             }
     }

@@ -12,4 +12,5 @@ data class User(
     val publicKey: String,
     val privateKey: String,
     val signature: String = "",
+    val isDonor: Boolean = false,
 )

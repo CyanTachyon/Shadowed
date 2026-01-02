@@ -111,6 +111,7 @@ fun Route.fileRoute()
                 senderName = userAuth.username,
                 time = Clock.System.now().toEpochMilliseconds(),
                 readAt = null,
+                senderIsDonor = userAuth.isDonor
             )
         )
     }
