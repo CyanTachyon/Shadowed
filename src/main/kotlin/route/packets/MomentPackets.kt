@@ -10,6 +10,10 @@ import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.dataClass.UserId
 import moe.tachyon.shadowed.database.*
 import moe.tachyon.shadowed.route.getKoin
+import moe.tachyon.shadowed.utils.FileUtils
+import moe.tachyon.shadowed.logger.ShadowedLogger
+
+private val logger = ShadowedLogger.getLogger()
 
 /**
  * Data class representing a moment item in the feed
@@ -397,7 +401,11 @@ object DeleteMomentHandler : PacketHandler
         // Verify ownership - only owner can delete their own moments
         if (chat.owner != loginUser.id)
             return session.sendError("Delete moment failed: You can only delete your own moments")
-
+        // Delete associated file first
+        logger.warning("Failed to delete file for moment $messageId")
+        {
+            FileUtils.deleteChatFile(messageId)
+        }
         // Delete the message
         messages.deleteMessage(messageId)
 

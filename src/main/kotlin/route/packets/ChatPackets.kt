@@ -12,6 +12,10 @@ import moe.tachyon.shadowed.database.ChatMembers
 import moe.tachyon.shadowed.database.Chats
 import moe.tachyon.shadowed.database.Messages
 import moe.tachyon.shadowed.route.*
+import moe.tachyon.shadowed.utils.FileUtils
+import moe.tachyon.shadowed.logger.ShadowedLogger
+
+private val logger = ShadowedLogger.getLogger()
 
 object GetChatsHandler: PacketHandler
 {
@@ -266,6 +270,15 @@ object EditMessageHandler: PacketHandler
 
         if (getKoin().get<ChatMembers>().getUserChats(loginUser.id).none { it.chatId == originalMessage.chatId })
             return session.sendError("Edit message failed: You are not a member of this chat")
+
+        // If deleting (newContent == null), also delete the associated file
+        if (newContent == null)
+        {
+            logger.warning("Failed to delete file for message $messageId")
+            {
+                FileUtils.deleteChatFile(messageId)
+            }
+        }
 
         messages.updateMessage(messageId, newContent)
 

@@ -2,21 +2,14 @@ package moe.tachyon.shadowed.database
 
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
-import moe.tachyon.shadowed.dataClass.ChatId
-import moe.tachyon.shadowed.dataClass.Message
-import moe.tachyon.shadowed.dataClass.MessageType
-import moe.tachyon.shadowed.dataClass.ReplyInfo
-import moe.tachyon.shadowed.dataClass.UserId
-import moe.tachyon.shadowed.database.utils.CustomExpression
+import moe.tachyon.shadowed.dataClass.*
 import moe.tachyon.shadowed.database.utils.CustomExpressionWithColumnType
 import moe.tachyon.shadowed.database.utils.singleOrNull
-import moe.tachyon.shadowed.logger.ShadowedLogger
 import org.jetbrains.exposed.dao.id.LongIdTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.kotlin.datetime.KotlinInstantColumnType
 import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
-import org.jetbrains.exposed.sql.kotlin.datetime.timestampWithTimeZone
 
 class Messages: SqlDao<Messages.MessageTable>(MessageTable)
 {
@@ -307,6 +300,26 @@ class Messages: SqlDao<Messages.MessageTable>(MessageTable)
     suspend fun deleteMessage(messageId: Long): Unit = query()
     {
         table.deleteWhere { table.id eq messageId }
+    }
+
+    /**
+     * Delete all messages in a chat
+     */
+    suspend fun deleteChatMessages(chatId: ChatId): Unit = query()
+    {
+        table.deleteWhere { table.chat eq chatId }
+    }
+
+    /**
+     * Get all message IDs that have files (IMAGE, VIDEO, FILE) in a chat
+     * This is a lightweight query that only fetches IDs and types without any JOINs
+     */
+    suspend fun getFileMessageIds(chatId: ChatId): List<Long> = query()
+    {
+        table
+            .select(table.id, table.type)
+            .where { (table.chat eq chatId) and (table.type inList listOf(MessageType.IMAGE, MessageType.VIDEO, MessageType.FILE)) }
+            .map { it[table.id].value }
     }
 
     /**

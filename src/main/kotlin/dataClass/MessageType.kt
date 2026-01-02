@@ -4,6 +4,8 @@ enum class MessageType
 {
     TEXT,
     IMAGE,
+    VIDEO,
+    FILE,
     ;
     companion object
     {
@@ -11,6 +13,8 @@ enum class MessageType
         {
             "TEXT" -> TEXT
             "IMAGE" -> IMAGE
+            "VIDEO" -> VIDEO
+            "FILE" -> FILE
             else -> TEXT
         }
     }

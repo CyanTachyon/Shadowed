@@ -12,6 +12,7 @@ import moe.tachyon.shadowed.dataClass.UserId
 import moe.tachyon.shadowed.database.Messages
 import moe.tachyon.shadowed.logger.ShadowedLogger
 import moe.tachyon.shadowed.route.distributeMessage
+import moe.tachyon.shadowed.utils.FileUtils
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import kotlin.coroutines.cancellation.CancellationException
@@ -69,30 +70,32 @@ object BurnAfterReadService: KoinComponent
 
         for (info in expiredMessageInfos)
         {
-            try
+            // Delete associated file first
+            logger.warning("Failed to delete file for expired message ${info.messageId}")
             {
-                // Delete the message first
+                FileUtils.deleteChatFile(info.messageId)
+            }
+
+            // Delete message
+            logger.warning("Failed to delete expired message ${info.messageId}")
+            {
                 messages.deleteMessage(info.messageId)
-
-                // Distribute a minimal "deleted" message to notify clients
-                // Use empty content and TEXT type to indicate deletion (same as edit_message with null)
-                distributeMessage(Message(
-                    id = info.messageId,
-                    content = "",
-                    type = MessageType.TEXT,
-                    chatId = info.chatId,
-                    senderId = UserId(0), // Not needed for deletion notification
-                    senderName = "",
-                    time = 0,
-                    readAt = null,
-                ))
-
-                logger.info("Deleted expired message ${info.messageId} from chat ${info.chatId}")
             }
-            catch (e: Exception)
-            {
-                logger.warning("Failed to delete expired message ${info.messageId}: ${e.message}")
-            }
+
+            // Distribute a minimal "deleted" message to notify clients
+            // Use empty content and TEXT type to indicate deletion (same as edit_message with null)
+            distributeMessage(Message(
+                id = info.messageId,
+                content = "",
+                type = MessageType.TEXT,
+                chatId = info.chatId,
+                senderId = UserId(0), // Not needed for deletion notification
+                senderName = "",
+                time = 0,
+                readAt = null,
+            ))
+
+            logger.info("Deleted expired message ${info.messageId} from chat ${info.chatId}")
         }
     }
 }

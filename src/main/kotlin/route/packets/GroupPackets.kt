@@ -9,10 +9,15 @@ import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.database.ChatMembers
 import moe.tachyon.shadowed.database.Chats
 import moe.tachyon.shadowed.database.Users
+import moe.tachyon.shadowed.database.Messages
+import moe.tachyon.shadowed.logger.ShadowedLogger
 import moe.tachyon.shadowed.route.SessionManager
 import moe.tachyon.shadowed.route.getKoin
 import moe.tachyon.shadowed.route.sendChatDetails
 import moe.tachyon.shadowed.route.sendChatList
+import moe.tachyon.shadowed.utils.FileUtils
+
+private val logger = ShadowedLogger.getLogger()
 
 object CreateGroupHandler : PacketHandler
 {
@@ -165,6 +170,22 @@ object KickMemberFromChatHandler : PacketHandler
             if (members.none { it.id == loginUser.id })
                 return session.sendError("You are not a member of this chat")
             chats.deleteChat(chatId)
+
+            // Get all message IDs that have files in this chat
+            val fileMessageIds = getKoin().get<Messages>().getFileMessageIds(chatId)
+
+            // Delete message files for this chat
+            fileMessageIds.forEach()
+            { msgId ->
+                logger.warning("Failed to delete file for message $msgId")
+                {
+                    FileUtils.deleteChatFile(msgId)
+                }
+            }
+
+            // Delete messages from database
+            getKoin().get<Messages>().deleteChatMessages(chatId)
+
             for (user in members)
             {
                 SessionManager.forEachSession(user.id)

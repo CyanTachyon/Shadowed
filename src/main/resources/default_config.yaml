@@ -47,3 +47,16 @@ database:
 
 # 最大图片大小, 单位: 字节
 maxImageSize: 10485760 # 10MB
+
+# 最大视频大小, 单位: 字节
+maxVideoSize: 1073741824 # 1GB
+
+# 最大文件大小, 单位: 字节
+maxFileSize: 1073741824 # 1GB
+
+# 分片上传配置
+upload:
+  # 分片大小, 单位: 字节
+  chunkSize: 5242880 # 5MB
+  # 上传任务过期时间, 单位: 小时
+  taskExpireHours: 24
