@@ -1,6 +1,7 @@
 package moe.tachyon.shadowed.route.packets
 
 import io.ktor.server.websocket.*
+import io.ktor.websocket.*
 import kotlinx.serialization.json.*
 import moe.tachyon.shadowed.contentNegotiationJson
 import moe.tachyon.shadowed.dataClass.ChatId
@@ -8,6 +9,7 @@ import moe.tachyon.shadowed.dataClass.ChatId.Companion.toChatId
 import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.database.ChatMembers
 import moe.tachyon.shadowed.database.Chats
+import moe.tachyon.shadowed.database.GroupInvitations
 import moe.tachyon.shadowed.database.Users
 import moe.tachyon.shadowed.database.Messages
 import moe.tachyon.shadowed.logger.ShadowedLogger
@@ -121,7 +123,35 @@ object AddMemberToChatHandler : PacketHandler
         if (chatMembers.isMember(chatId, targetUser.id))
             return session.sendError("$username is already a member")
 
-        // Add the new member
+        // Check if the group requires approval for new members
+        if (chat.requireApproval && chat.owner != loginUser.id)
+        {
+            // Need owner approval - create an invitation
+            val groupInvitations = getKoin().get<GroupInvitations>()
+            
+            if (groupInvitations.hasPendingInvitation(chatId, targetUser.id))
+                return session.sendError("An invitation for $username is already pending approval")
+
+            groupInvitations.createInvitation(chatId, loginUser.id, targetUser.id, encryptedKey)
+
+            session.sendSuccess("Invitation sent. Waiting for group owner's approval.")
+
+            // Notify the group owner
+            val notifyResponse = buildJsonObject()
+            {
+                put("packet", "group_invitation_received")
+                put("chatId", chatId.value)
+                put("chatName", chat.name)
+                put("inviterName", loginUser.username)
+                put("targetUsername", targetUser.username)
+            }
+            SessionManager.forEachSession(chat.owner) { s ->
+                s.send(contentNegotiationJson.encodeToString(notifyResponse))
+            }
+            return
+        }
+
+        // No approval needed or inviter is the owner - add directly
         chatMembers.addMember(chatId, targetUser.id, encryptedKey)
 
         session.sendSuccess("Member added successfully")
@@ -139,6 +169,174 @@ object AddMemberToChatHandler : PacketHandler
 
         val systemMessage = getKoin().get<Messages>().getMessage(systemMessageId) ?: return
         distributeMessage(systemMessage, silent = true)
+    }
+}
+
+/**
+ * Group owner approves or rejects a group invitation.
+ */
+object HandleGroupInvitationHandler : PacketHandler
+{
+    override val packetName = "handle_group_invitation"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (invitationId, approve) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val id = json.jsonObject["invitationId"]!!.jsonPrimitive.int
+            val a = json.jsonObject["approve"]!!.jsonPrimitive.boolean
+            Pair(id, a)
+        }.getOrNull() ?: return session.sendError("Invalid packet format")
+
+        val groupInvitations = getKoin().get<GroupInvitations>()
+        val chats = getKoin().get<Chats>()
+        val chatMembers = getKoin().get<ChatMembers>()
+
+        val invitation = groupInvitations.getInvitation(invitationId)
+            ?: return session.sendError("Invitation not found")
+
+        val chat = chats.getChat(invitation.chatId)
+            ?: return session.sendError("Chat not found")
+
+        // Verify the current user is the group owner
+        if (chat.owner != loginUser.id)
+            return session.sendError("Only the group owner can approve invitations")
+
+        if (invitation.status != "PENDING")
+            return session.sendError("Invitation is no longer pending")
+
+        if (approve)
+        {
+            groupInvitations.approveInvitation(invitationId)
+
+            // Check if the user is already a member (may have been added through another invitation)
+            if (!chatMembers.isMember(invitation.chatId, invitation.targetUserId))
+            {
+                chatMembers.addMember(invitation.chatId, invitation.targetUserId, invitation.encryptedKey)
+
+                val members = chatMembers.getChatMembersDetailed(invitation.chatId)
+                for (user in members)
+                    SessionManager.forEachSession(user.id) { s -> s.sendChatDetails(chat, members) }
+                SessionManager.forEachSession(invitation.targetUserId) { s -> s.sendChatList(invitation.targetUserId) }
+
+                val systemMessageId = getKoin().get<Messages>().addSystemMessage(
+                    content = "${invitation.inviterName} invited ${invitation.targetUsername} to the chat",
+                    chatId = invitation.chatId
+                )
+                val systemMessage = getKoin().get<Messages>().getMessage(systemMessageId)
+                if (systemMessage != null) distributeMessage(systemMessage, silent = true)
+            }
+
+            session.sendSuccess("Invitation approved")
+
+            // Notify the inviter
+            val notifyInviter = buildJsonObject()
+            {
+                put("packet", "group_invitation_approved")
+                put("invitationId", invitationId)
+                put("chatId", invitation.chatId.value)
+            }
+            SessionManager.forEachSession(invitation.inviterId) { s ->
+                s.send(contentNegotiationJson.encodeToString(notifyInviter))
+            }
+
+            // Notify the target user
+            val notifyTarget = buildJsonObject()
+            {
+                put("packet", "group_invitation_approved")
+                put("invitationId", invitationId)
+                put("chatId", invitation.chatId.value)
+            }
+            SessionManager.forEachSession(invitation.targetUserId) { s ->
+                s.send(contentNegotiationJson.encodeToString(notifyTarget))
+            }
+        }
+        else
+        {
+            groupInvitations.rejectInvitation(invitationId)
+            session.sendSuccess("Invitation rejected")
+
+            // Notify the inviter
+            val notifyInviter = buildJsonObject()
+            {
+                put("packet", "group_invitation_rejected")
+                put("invitationId", invitationId)
+                put("chatId", invitation.chatId.value)
+            }
+            SessionManager.forEachSession(invitation.inviterId) { s ->
+                s.send(contentNegotiationJson.encodeToString(notifyInviter))
+            }
+        }
+    }
+}
+
+/**
+ * Get all pending group invitations for groups owned by the current user.
+ */
+object GetGroupInvitationsHandler : PacketHandler
+{
+    override val packetName = "get_group_invitations"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val groupInvitations = getKoin().get<GroupInvitations>()
+        val invitations = groupInvitations.getPendingInvitationsForOwner(loginUser.id)
+
+        val response = buildJsonObject()
+        {
+            put("packet", "group_invitations_list")
+            put("invitations", contentNegotiationJson.encodeToJsonElement(invitations))
+        }
+        session.send(contentNegotiationJson.encodeToString(response))
+    }
+}
+
+/**
+ * Group owner toggles the require approval setting.
+ */
+object SetRequireApprovalHandler : PacketHandler
+{
+    override val packetName = "set_require_approval"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (chatIdVal, requireApproval) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val id = json.jsonObject["chatId"]!!.jsonPrimitive.int
+            val a = json.jsonObject["requireApproval"]!!.jsonPrimitive.boolean
+            Pair(id, a)
+        }.getOrNull() ?: return session.sendError("Invalid packet format")
+
+        val chatId = ChatId(chatIdVal)
+        val chats = getKoin().get<Chats>()
+
+        val chat = chats.getChat(chatId) ?: return session.sendError("Chat not found")
+        if (chat.owner != loginUser.id)
+            return session.sendError("Only the group owner can change this setting")
+
+        chats.setRequireApproval(chatId, requireApproval)
+        session.sendSuccess(if (requireApproval) "Invitations now require approval" else "Invitations no longer require approval")
+
+        // Refresh chat details for all members
+        val chatMembers = getKoin().get<ChatMembers>()
+        val members = chatMembers.getChatMembersDetailed(chatId)
+        val updatedChat = chats.getChat(chatId) ?: return
+        for (user in members)
+            SessionManager.forEachSession(user.id) { s -> s.sendChatDetails(updatedChat, members) }
     }
 }
 

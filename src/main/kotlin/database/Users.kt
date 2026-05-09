@@ -27,6 +27,7 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         val privateKey = text("private_key")
         val signature = text("signature").default("")
         val donationAmount = long("donation_amount").default(0)
+        val nickname = varchar("nickname", 50).nullable().default(null)
     }
 
     private fun deserialize(row: ResultRow): User = User(
@@ -37,6 +38,7 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         privateKey = row[table.privateKey],
         signature = row[table.signature],
         isDonor = row[table.donationAmount] > 0,
+        nickname = row[table.nickname],
     )
 
     suspend fun createUser(
@@ -83,6 +85,14 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         update({ table.id eq userId })
         {
             it[signature] = newSignature
+        }
+    }
+
+    suspend fun updateNickname(userId: UserId, newNickname: String?) = query()
+    {
+        update({ table.id eq userId })
+        {
+            it[nickname] = newNickname
         }
     }
 

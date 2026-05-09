@@ -5,8 +5,8 @@ import io.ktor.websocket.*
 import kotlinx.serialization.json.*
 import moe.tachyon.shadowed.contentNegotiationJson
 import moe.tachyon.shadowed.dataClass.ChatId
-import moe.tachyon.shadowed.database.*
 import moe.tachyon.shadowed.dataClass.User
+import moe.tachyon.shadowed.database.*
 import moe.tachyon.shadowed.route.*
 
 object GetFriendsHandler : PacketHandler
@@ -42,12 +42,14 @@ object GetFriendsHandler : PacketHandler
             put("friends", buildJsonArray()
             {
                 friendsList.forEach()
-                { (id, name) ->
+                { friend ->
                     addJsonObject()
                     {
-                        put("id", id.value)
-                        put("username", name)
-                        put("canViewMoments", momentViewerIds.contains(id))
+                        put("id", friend.id.value)
+                        put("username", friend.username)
+                        put("nickname", friend.nickname)
+                        put("remark", friend.remark)
+                        put("canViewMoments", momentViewerIds.contains(friend.id))
                     }
                 }
             })
@@ -56,6 +58,278 @@ object GetFriendsHandler : PacketHandler
     }
 }
 
+/**
+ * Send a friend request. The request is persisted in the database.
+ * The target user will be notified via WebSocket.
+ */
+object SendFriendRequestHandler : PacketHandler
+{
+    override val packetName = "send_friend_request"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (targetUsername, message) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val u = json.jsonObject["targetUsername"]!!.jsonPrimitive.content
+            val m = json.jsonObject["message"]?.jsonPrimitive?.content
+            Pair(u, m)
+        }.getOrNull() ?: return session.sendError("Send friend request failed: Invalid packet format")
+
+        if (targetUsername.equals(loginUser.username, ignoreCase = true))
+            return session.sendError("Cannot send friend request to yourself")
+
+        val targetUser = getKoin().get<Users>().getUserByUsername(targetUsername) 
+            ?: return session.sendError("User not found")
+
+        val friends = getKoin().get<Friends>()
+        val friendRequests = getKoin().get<FriendRequests>()
+
+        // Check if already friends
+        if (friends.areFriends(loginUser.id, targetUser.id))
+            return session.sendError("Already friends with $targetUsername")
+
+        // Check if there's already a pending request in either direction
+        if (friendRequests.hasPendingRequestBetween(loginUser.id, targetUser.id))
+            return session.sendError("A friend request is already pending between you and $targetUsername")
+
+        val requestId = friendRequests.createRequest(loginUser.id, targetUser.id, message)
+
+        session.sendSuccess("Friend request sent to $targetUsername")
+
+        // Notify the target user if they're online
+        val request = friendRequests.getRequest(requestId)
+        if (request != null)
+        {
+            val notifyResponse = buildJsonObject()
+            {
+                put("packet", "friend_request_received")
+                put("request", contentNegotiationJson.encodeToJsonElement(request))
+            }
+            SessionManager.forEachSession(targetUser.id) { s ->
+                s.send(contentNegotiationJson.encodeToString(notifyResponse))
+            }
+        }
+    }
+}
+
+/**
+ * Accept a friend request. The accepting user generates the chat key and establishes the friendship.
+ */
+object AcceptFriendRequestHandler : PacketHandler
+{
+    override val packetName = "accept_friend_request"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (requestId, keyForRequester, keyForSelf) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val id = json.jsonObject["requestId"]!!.jsonPrimitive.int
+            val kfr = json.jsonObject["keyForRequester"]!!.jsonPrimitive.content
+            val kfs = json.jsonObject["keyForSelf"]!!.jsonPrimitive.content
+            Triple(id, kfr, kfs)
+        }.getOrNull() ?: return session.sendError("Accept friend request failed: Invalid packet format")
+
+        val friendRequests = getKoin().get<FriendRequests>()
+        val friends = getKoin().get<Friends>()
+        val chatMembers = getKoin().get<ChatMembers>()
+
+        val request = friendRequests.getRequest(requestId)
+            ?: return session.sendError("Friend request not found")
+
+        // Verify the accepting user is the target of the request
+        if (request.toUser != loginUser.id)
+            return session.sendError("You cannot accept this friend request")
+
+        if (request.status != "PENDING")
+            return session.sendError("Friend request is no longer pending")
+
+        // Check if already friends (may have been added through another request)
+        if (friends.areFriends(request.fromUser, loginUser.id))
+        {
+            friendRequests.acceptRequest(requestId)
+            return session.sendError("Already friends with this user")
+        }
+
+        // Accept the request
+        friendRequests.acceptRequest(requestId)
+
+        // Create the friendship (accepting user is loginUser)
+        val chatId = friends.addFriend(request.fromUser, loginUser.id)
+            ?: return session.sendError("Failed to create chat")
+
+        // Add both users as chat members with their encrypted keys
+        chatMembers.addMember(chatId, loginUser.id, keyForSelf)
+        chatMembers.addMember(chatId, request.fromUser, keyForRequester)
+
+        // Notify both users
+        val response = buildJsonObject()
+        {
+            put("packet", "friend_added")
+            put("chatId", chatId.value)
+            put("isExisting", false)
+            put("message", "Friend added & Chat created")
+        }
+        session.send(contentNegotiationJson.encodeToString(response))
+
+        // Notify the requester
+        val requesterNotify = buildJsonObject()
+        {
+            put("packet", "friend_request_accepted")
+            put("requestId", requestId)
+            put("chatId", chatId.value)
+            put("acceptedByUsername", loginUser.username)
+        }
+        SessionManager.forEachSession(request.fromUser) { s ->
+            s.send(contentNegotiationJson.encodeToString(requesterNotify))
+            s.sendChatList(request.fromUser)
+        }
+
+        SessionManager.forEachSession(loginUser.id) { s -> s.sendChatList(loginUser.id) }
+    }
+}
+
+/**
+ * Reject a friend request.
+ */
+object RejectFriendRequestHandler : PacketHandler
+{
+    override val packetName = "reject_friend_request"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val requestId = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            json.jsonObject["requestId"]!!.jsonPrimitive.int
+        }.getOrNull() ?: return session.sendError("Invalid packet format")
+
+        val friendRequests = getKoin().get<FriendRequests>()
+
+        val request = friendRequests.getRequest(requestId)
+            ?: return session.sendError("Friend request not found")
+
+        // Verify the rejecting user is the target of the request
+        if (request.toUser != loginUser.id)
+            return session.sendError("You cannot reject this friend request")
+
+        if (request.status != "PENDING")
+            return session.sendError("Friend request is no longer pending")
+
+        friendRequests.rejectRequest(requestId)
+
+        session.sendSuccess("Friend request rejected")
+
+        // Notify the requester
+        val requesterNotify = buildJsonObject()
+        {
+            put("packet", "friend_request_rejected")
+            put("requestId", requestId)
+            put("rejectedByUsername", loginUser.username)
+        }
+        SessionManager.forEachSession(request.fromUser) { s ->
+            s.send(contentNegotiationJson.encodeToString(requesterNotify))
+        }
+    }
+}
+
+/**
+ * Get all pending friend requests for the current user.
+ */
+object GetFriendRequestsHandler : PacketHandler
+{
+    override val packetName = "get_friend_requests"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val friendRequests = getKoin().get<FriendRequests>()
+        val requests = friendRequests.getPendingRequestsFull(loginUser.id)
+
+        val response = buildJsonObject()
+        {
+            put("packet", "friend_requests_list")
+            put("requests", contentNegotiationJson.encodeToJsonElement(requests))
+        }
+        session.send(contentNegotiationJson.encodeToString(response))
+    }
+}
+
+/**
+ * Update nickname for the current user.
+ */
+object UpdateNicknameHandler : PacketHandler
+{
+    override val packetName = "update_nickname"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val nickname = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            json.jsonObject["nickname"]?.takeIf { it !is JsonNull }?.jsonPrimitive?.content
+        }.getOrNull()
+
+        getKoin().get<Users>().updateNickname(loginUser.id, nickname)
+        session.sendSuccess("Nickname updated")
+    }
+}
+
+/**
+ * Update remark for a friend.
+ */
+object UpdateFriendRemarkHandler : PacketHandler
+{
+    override val packetName = "update_friend_remark"
+    
+    override suspend fun handle(
+        session: DefaultWebSocketServerSession,
+        packetData: String,
+        loginUser: User
+    )
+    {
+        val (friendId, remark) = runCatching()
+        {
+            val json = contentNegotiationJson.parseToJsonElement(packetData)
+            val id = json.jsonObject["friendId"]!!.jsonPrimitive.int
+            val r = json.jsonObject["remark"]?.takeIf { it !is JsonNull }?.jsonPrimitive?.content
+            Pair(id, r)
+        }.getOrNull() ?: return session.sendError("Invalid packet format")
+
+        val friends = getKoin().get<Friends>()
+        
+        if (!friends.areFriends(loginUser.id, moe.tachyon.shadowed.dataClass.UserId(friendId)))
+            return session.sendError("Not friends with this user")
+
+        friends.updateRemark(loginUser.id, moe.tachyon.shadowed.dataClass.UserId(friendId), remark)
+        session.sendSuccess("Remark updated")
+    }
+}
+
+/**
+ * Legacy handler kept for backward compatibility.
+ * Now simply sends a friend request.
+ */
 object AddFriendHandler : PacketHandler
 {
     override val packetName = "add_friend"
@@ -66,51 +340,61 @@ object AddFriendHandler : PacketHandler
         loginUser: User
     )
     {
-        val (targetUsername, keyForFriend, keyForSelf) = runCatching()
+        // Redirect to send_friend_request behavior but without message
+        val targetUsername = runCatching()
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
-            val u = json.jsonObject["targetUsername"]!!.jsonPrimitive.content
-            val kf = json.jsonObject["keyForFriend"]!!.jsonPrimitive.content
-            val ks = json.jsonObject["keyForSelf"]!!.jsonPrimitive.content
-            Triple(u, kf, ks)
+            json.jsonObject["targetUsername"]!!.jsonPrimitive.content
         }.getOrNull() ?: return session.sendError("Add friend failed: Invalid packet format")
 
         if (targetUsername.equals(loginUser.username, ignoreCase = true))
-            return session.sendError("Add friend failed: Cannot add yourself")
+            return session.sendError("Cannot add yourself")
 
         val targetUser = getKoin().get<Users>().getUserByUsername(targetUsername) 
-            ?: return session.sendError("Add friend failed: User not found")
+            ?: return session.sendError("User not found")
 
         val friends = getKoin().get<Friends>()
-        val chatMembers = getKoin().get<ChatMembers>()
-        
-        // Check if chat already exists
-        val existingMembership = friends.getFriendChat(loginUser.id, targetUser.id)
-        
-        val chatId: ChatId
-        val isExisting: Boolean
-        
-        if (existingMembership != null)
+        val friendRequests = getKoin().get<FriendRequests>()
+
+        // Check if already friends
+        if (friends.areFriends(loginUser.id, targetUser.id))
         {
-            chatId = existingMembership
-            isExisting = true
-        }
-        else
-        {
-            chatId = friends.addFriend(loginUser.id, targetUser.id) ?: return session.sendError("Chat creation failed")
-            isExisting = false
-            chatMembers.addMember(chatId, loginUser.id, keyForSelf)
-            chatMembers.addMember(chatId, targetUser.id, keyForFriend)
+            // If already friends, just open the existing chat
+            val existingChatId = friends.getFriendChat(loginUser.id, targetUser.id)
+            if (existingChatId != null)
+            {
+                val response = buildJsonObject()
+                {
+                    put("packet", "friend_added")
+                    put("chatId", existingChatId.value)
+                    put("isExisting", true)
+                    put("message", "Opening existing chat")
+                }
+                session.send(contentNegotiationJson.encodeToString(response))
+            }
+            return
         }
 
-        val response = buildJsonObject()
+        // Check if there's already a pending request
+        if (friendRequests.hasPendingRequestBetween(loginUser.id, targetUser.id))
+            return session.sendError("A friend request is already pending")
+
+        val requestId = friendRequests.createRequest(loginUser.id, targetUser.id, null)
+
+        session.sendSuccess("Friend request sent to $targetUsername")
+
+        // Notify the target user
+        val request = friendRequests.getRequest(requestId)
+        if (request != null)
         {
-            put("packet", "friend_added")
-            put("chatId", chatId.value)
-            put("isExisting", isExisting)
-            put("message", if (isExisting) "Opening existing chat" else "Friend added & Chat created")
+            val notifyResponse = buildJsonObject()
+            {
+                put("packet", "friend_request_received")
+                put("request", contentNegotiationJson.encodeToJsonElement(request))
+            }
+            SessionManager.forEachSession(targetUser.id) { s ->
+                s.send(contentNegotiationJson.encodeToString(notifyResponse))
+            }
         }
-        session.send(contentNegotiationJson.encodeToString(response))
-        SessionManager.forEachSession(targetUser.id) { s -> s.sendChatList(targetUser.id) }
     }
 }

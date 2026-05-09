@@ -32,6 +32,7 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
         val isMoment = bool("is_moment").default(false)
         val lastChatAt = timestamp("last_chat_at").clientDefault { Clock.System.now() }
         val burnTime = long("burn_time").nullable().default(null) // 阅后即焚时间（毫秒），null表示关闭
+        val requireApproval = bool("require_approval").default(false) // 群聊邀请是否需要群主审批
         init
         {
             uniqueIndex(owner) { isMoment eq true }
@@ -63,6 +64,7 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
                 isMoment = it[table.isMoment],
                 lastChatAt = it[table.lastChatAt],
                 burnTime = it[table.burnTime],
+                requireApproval = it[table.requireApproval],
             )
         }
     }
@@ -158,7 +160,16 @@ class Chats: SqlDao<Chats.ChatTable>(ChatTable)
                 isMoment = it[table.isMoment],
                 lastChatAt = it[table.lastChatAt],
                 burnTime = it[table.burnTime],
+                requireApproval = it[table.requireApproval],
             )
+        }
+    }
+
+    suspend fun setRequireApproval(chatId: ChatId, requireApproval: Boolean) = query()
+    {
+        table.update({ table.id eq chatId })
+        {
+            it[this.requireApproval] = requireApproval
         }
     }
 }

@@ -105,6 +105,7 @@ suspend fun WebSocketSession.sendChatDetails(chat: Chat, members: List<User>)
             put("name", chat.name)
             put("ownerId", chat.owner.value)
             put("isPrivate", chat.private)
+            put("requireApproval", chat.requireApproval)
             put("members", buildJsonArray()
             {
                 membersWithOnlineStatus.forEach { (member, isOnline) ->
@@ -114,6 +115,7 @@ suspend fun WebSocketSession.sendChatDetails(chat: Chat, members: List<User>)
                         put("username", member.username)
                         put("isDonor", member.isDonor)
                         put("isOnline", isOnline)
+                        put("nickname", member.nickname)
                         // Only include signature for private chats
                         if (chat.private) put("signature", member.signature)
                     }

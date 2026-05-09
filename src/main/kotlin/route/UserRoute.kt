@@ -141,6 +141,7 @@ fun Route.userRoute()
                     put("username", user.username)
                     put("signature", user.signature)
                     put("isDonor", user.isDonor)
+                    put("nickname", user.nickname)
                 }
                 call.respond(response)
             }
@@ -160,6 +161,7 @@ fun Route.userRoute()
                     put("username", user.username)
                     put("signature", user.signature)
                     put("isDonor", user.isDonor)
+                    put("nickname", user.nickname)
                 }
                 call.respond(response)
             }

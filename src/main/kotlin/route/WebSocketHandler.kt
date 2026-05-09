@@ -29,10 +29,19 @@ private val packetHandlers: Map<String, PacketHandler> = listOf(
     // Friend packets
     GetFriendsHandler,
     AddFriendHandler,
+    SendFriendRequestHandler,
+    AcceptFriendRequestHandler,
+    RejectFriendRequestHandler,
+    GetFriendRequestsHandler,
+    UpdateNicknameHandler,
+    UpdateFriendRemarkHandler,
     // Group packets
     CreateGroupHandler,
     AddMemberToChatHandler,
     KickMemberFromChatHandler,
+    SetRequireApprovalHandler,
+    HandleGroupInvitationHandler,
+    GetGroupInvitationsHandler,
     // Broadcast packets
     SendBroadcastHandler,
     GetBroadcastsHandler,

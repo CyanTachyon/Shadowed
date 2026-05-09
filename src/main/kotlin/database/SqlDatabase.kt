@@ -80,7 +80,9 @@ object SqlDatabase: KoinComponent
         Broadcasts::class,
         ChatMembers::class,
         Chats::class,
+        FriendRequests::class,
         Friends::class,
+        GroupInvitations::class,
         Messages::class,
         Users::class,
     )

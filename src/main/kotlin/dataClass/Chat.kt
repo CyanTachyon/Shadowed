@@ -12,4 +12,5 @@ data class Chat(
     val isMoment: Boolean = false,
     val lastChatAt: Instant,
     val burnTime: Long? = null, // 阅后即焚时间（毫秒），null表示关闭
+    val requireApproval: Boolean = false, // 群聊邀请是否需要群主审批
 )

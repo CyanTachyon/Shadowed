@@ -13,4 +13,5 @@ data class User(
     val privateKey: String,
     val signature: String = "",
     val isDonor: Boolean = false,
+    val nickname: String? = null,
 )

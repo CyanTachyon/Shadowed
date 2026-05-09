@@ -61,7 +61,7 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
     {
         val res = (table innerJoin chats.table)
             .select(table.chat, table.key, table.unread, table.doNotDisturb,
-                chats.table.name, chats.table.private, chats.table.burnTime, chats.table.lastChatAt)
+                chats.table.name, chats.table.private, chats.table.burnTime, chats.table.lastChatAt, chats.table.requireApproval)
             .andWhere { table.user eq userId }
             .andWhere { chats.table.isMoment eq false }
             .toList()
@@ -69,7 +69,7 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
 
         val chatIds = res.map { it[table.chat].value }
         val members = (table innerJoin users.table)
-            .select(users.table.id, users.table.username, table.chat, users.table.donationAmount)
+            .select(users.table.id, users.table.username, users.table.nickname, table.chat, users.table.donationAmount)
             .andWhere { table.chat inList chatIds }
             .toList()
             .groupBy { it[table.chat].value }
@@ -90,14 +90,16 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
                 { memberRow ->
                     ChatMember(
                         id = memberRow[users.table.id].value,
-                        name = memberRow[users.table.username]
+                        username = memberRow[users.table.username],
+                        nickname = memberRow[users.table.nickname]
                     )
                 } ?: emptyList(),
                 isPrivate = chatRow[chats.table.private],
                 unreadCount = chatRow[table.unread],
                 doNotDisturb = chatRow[table.doNotDisturb],
                 burnTime = chatRow[chats.table.burnTime],
-                otherUserIsDonor = isPrivate && members[chatRow[table.chat].value]?.any { it[users.table.id].value != userId && it[users.table.donationAmount] > 0 } == true
+                otherUserIsDonor = isPrivate && members[chatRow[table.chat].value]?.any { it[users.table.id].value != userId && it[users.table.donationAmount] > 0 } == true,
+                requireApproval = chatRow[chats.table.requireApproval],
             )
         }
     }
@@ -123,7 +125,8 @@ class ChatMembers: SqlDao<ChatMembers.ChatMemberTable>(ChatMemberTable)
                     publicKey = "",
                     privateKey = "",
                     signature = row[uTable.signature],
-                    isDonor = row[uTable.donationAmount] > 0
+                    isDonor = row[uTable.donationAmount] > 0,
+                    nickname = row[uTable.nickname]
                 )
             }
     }

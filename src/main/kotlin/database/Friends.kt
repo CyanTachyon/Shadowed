@@ -29,6 +29,8 @@ class Friends: SqlDao<Friends.FriendTable>(FriendTable)
             onDelete = ReferenceOption.CASCADE,
             onUpdate = ReferenceOption.CASCADE
         ).index()
+        val remarkForA = varchar("remark_for_a", 100).nullable().default(null)
+        val remarkForB = varchar("remark_for_b", 100).nullable().default(null)
         // reference to chat is enough; moment viewer membership is stored in ChatMembers
         override val primaryKey: PrimaryKey = PrimaryKey(userA, userB)
 
@@ -74,7 +76,17 @@ class Friends: SqlDao<Friends.FriendTable>(FriendTable)
         chat
     }
 
-    suspend fun getFriends(userId: UserId): List<Pair<UserId, String>> = query()
+    /**
+     * Friend info including nickname and remark
+     */
+    data class FriendInfo(
+        val id: UserId,
+        val username: String,
+        val nickname: String? = null,
+        val remark: String? = null,
+    )
+
+    suspend fun getFriends(userId: UserId): List<FriendInfo> = query()
     {
         val userTable = get<Users>().table
         val chatTable = get<Chats>().table
@@ -84,16 +96,30 @@ class Friends: SqlDao<Friends.FriendTable>(FriendTable)
             .selectAll()
             .where { table.userA eq userId }
             .orderBy(chatTable.lastChatAt, SortOrder.DESC)
-            .map { it[userTable.id].value to it[userTable.username] }
+            .map {
+                FriendInfo(
+                    id = it[userTable.id].value,
+                    username = it[userTable.username],
+                    nickname = it[userTable.nickname],
+                    remark = it[table.remarkForA],
+                )
+            }
         val queryB = table
             .join(userTable, JoinType.INNER, table.userA, userTable.id)
             .join(chatTable, JoinType.INNER, table.chat, chatTable.id)
             .selectAll()
             .where { table.userB eq userId }
             .orderBy(chatTable.lastChatAt, SortOrder.DESC)
-            .map { it[userTable.id].value to it[userTable.username] }
+            .map {
+                FriendInfo(
+                    id = it[userTable.id].value,
+                    username = it[userTable.username],
+                    nickname = it[userTable.nickname],
+                    remark = it[table.remarkForB],
+                )
+            }
 
-        (queryA + queryB).distinctBy { it.first }
+        (queryA + queryB).distinctBy { it.id }
     }
 
     /**
@@ -111,5 +137,30 @@ class Friends: SqlDao<Friends.FriendTable>(FriendTable)
         val a = minOf(userAId, userBId)
         val b = maxOf(userAId, userBId)
         table.selectAll().where { (table.userA eq a) and (table.userB eq b) }.singleOrNull()?.get(table.chat)?.value
+    }
+
+    /**
+     * Update the remark for a friend. The remark is stored from the perspective of the current user.
+     */
+    suspend fun updateRemark(currentUserId: UserId, friendId: UserId, remark: String?): Boolean = query()
+    {
+        val a = minOf(currentUserId, friendId)
+        val b = maxOf(currentUserId, friendId)
+        val remarkColumn = if (currentUserId < friendId) table.remarkForA else table.remarkForB
+        table.update({ (table.userA eq a) and (table.userB eq b) })
+        {
+            it[remarkColumn] = remark
+        } > 0
+    }
+
+    /**
+     * Get the remark for a specific friend
+     */
+    suspend fun getFriendRemark(currentUserId: UserId, friendId: UserId): String? = query()
+    {
+        val a = minOf(currentUserId, friendId)
+        val b = maxOf(currentUserId, friendId)
+        val row = table.selectAll().where { (table.userA eq a) and (table.userB eq b) }.singleOrNull() ?: return@query null
+        if (currentUserId < friendId) row[table.remarkForA] else row[table.remarkForB]
     }
 }
