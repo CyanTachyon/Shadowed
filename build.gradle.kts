@@ -31,7 +31,6 @@ dependencies {
     implementation("io.ktor:ktor-server-core-jvm") // core
     implementation("io.ktor:ktor-server-netty-jvm") // netty
     implementation("io.ktor:ktor-server-auth-jvm") // 登陆验证
-    implementation("io.ktor:ktor-server-auth-jwt-jvm") // jwt登陆验证
     implementation("io.ktor:ktor-server-content-negotiation") // request/response时反序列化
     implementation("io.ktor:ktor-server-status-pages") // 错误页面(异常处理)
     implementation("io.ktor:ktor-server-swagger")
@@ -55,7 +54,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2") // 协程
 
     // utils
-    implementation("com.sun.mail:javax.mail:1.6.2") // 邮件发送
     implementation("ch.qos.logback:logback-classic:$logback_version") // 日志
     implementation("com.charleskorn.kaml:kaml:0.80.0") // yaml for kotlin on read/write file
     implementation("io.ktor:ktor-server-config-yaml-jvm") // yaml on read application.yaml
