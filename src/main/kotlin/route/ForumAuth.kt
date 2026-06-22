@@ -4,12 +4,19 @@ import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.routing.*
+import io.ktor.util.AttributeKey
 import moe.tachyon.shadowed.dataClass.ForumPostZone
 import moe.tachyon.shadowed.dataClass.ForumZone
 import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.dataClass.UserId
 import moe.tachyon.shadowed.database.Sessions
 import moe.tachyon.shadowed.database.Users
+
+// Per-request cache for authenticateSession() so the RateLimit plugin and
+// downstream route handlers don't each re-run the Sessions+Users DB lookups
+// for the same call. Attributes are scoped to a single request lifecycle.
+private val AuthSessionVerifiedKey = AttributeKey<Boolean>("AuthSessionVerified")
+private val AuthSessionUserKey = AttributeKey<User>("AuthSessionUser")
 
 /**
  * 论坛权限检查工具
@@ -21,14 +28,23 @@ object ForumAuth
      */
     suspend fun authenticate(request: ApplicationRequest): User?
     {
-        val username = request.header("X-Auth-User") ?: return null
-        val sessionToken = request.header("X-Auth-Session") ?: return null
-
+        val call = request.call
+        if (call.attributes.contains(AuthSessionVerifiedKey))
+        {
+            return call.attributes.getOrNull(AuthSessionUserKey)
+        }
+        val username = request.header("X-Auth-User") ?: run {
+            call.attributes.put(AuthSessionVerifiedKey, true); return null
+        }
+        val sessionToken = request.header("X-Auth-Session") ?: run {
+            call.attributes.put(AuthSessionVerifiedKey, true); return null
+        }
         val users = getKoin().get<Users>()
         val sessions = getKoin().get<Sessions>()
-        val userId = sessions.verify(sessionToken) ?: return null
-        val user = users.getUser(userId) ?: return null
-        if (user.username != username) return null
+        val userId = sessions.verify(sessionToken)
+        val user = userId?.let { users.getUser(it) }?.takeIf { it.username == username }
+        call.attributes.put(AuthSessionVerifiedKey, true)
+        user?.let { call.attributes.put(AuthSessionUserKey, it) }
         return user
     }
 
@@ -62,17 +78,7 @@ object ForumAuth
     }
 }
 
-suspend fun ApplicationCall.authenticateSession(): User?
-{
-    val username = request.header("X-Auth-User") ?: return null
-    val sessionToken = request.header("X-Auth-Session") ?: return null
-    val users = getKoin().get<Users>()
-    val sessions = getKoin().get<Sessions>()
-    val userId = sessions.verify(sessionToken) ?: return null
-    val user = users.getUser(userId) ?: return null
-    if (user.username != username) return null
-    return user
-}
+suspend fun ApplicationCall.authenticateSession(): User? = ForumAuth.authenticate(request)
 
 /**
  * 扩展函数：从请求中获取已认证用户，失败返回 401
