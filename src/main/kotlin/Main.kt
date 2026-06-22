@@ -12,8 +12,10 @@ import moe.tachyon.shadowed.logger.ShadowedLogger
 import moe.tachyon.shadowed.plugin.autoHead.installAutoHead
 import moe.tachyon.shadowed.plugin.contentNegotiation.installContentNegotiation
 import moe.tachyon.shadowed.plugin.cors.installCORS
+import moe.tachyon.shadowed.plugin.defaultHeaders.installDefaultHeaders
 import moe.tachyon.shadowed.plugin.doubleReceive.installDoubleReceive
 import moe.tachyon.shadowed.plugin.koin.installKoin
+import moe.tachyon.shadowed.plugin.rateLimit.installRateLimit
 import moe.tachyon.shadowed.plugin.sse.installSSE
 import moe.tachyon.shadowed.plugin.statusPages.installStatusPages
 import moe.tachyon.shadowed.plugin.webSockets.installWebSockets
@@ -129,12 +131,14 @@ fun Application.init()
     startConsoleCommandHandler()
 
     installAutoHead()
+    installDefaultHeaders()
     installContentNegotiation()
     installCORS()
     installDoubleReceive()
     installSSE()
     installStatusPages()
     installWebSockets()
+    installRateLimit()
 
     // install database
     SqlDatabase.apply { this@init.init() }

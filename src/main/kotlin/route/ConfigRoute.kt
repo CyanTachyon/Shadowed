@@ -1,25 +1,13 @@
 package moe.tachyon.shadowed.route
 
-import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.put
-import moe.tachyon.shadowed.contentNegotiationJson
 
 fun Route.configRoute()
 {
-    get("/auth/params")
-    {
-        call.respond(
-            buildJsonObject()
-            {
-                put("authKey", SERVER_AUTH_KEY)
-            }
-        )
-    }
-
     get("/project")
     {
         val projectName = environment.config.propertyOrNull("project.name")?.getString() ?: "ShadowedChat"
@@ -35,7 +23,7 @@ fun Route.configRoute()
         val users = getKoin().get<moe.tachyon.shadowed.database.Users>()
         val donorsWithAmount = users.getDonors()
 
-        call.respond(
+        call.respondApi(
             buildJsonObject()
             {
                 put("name", projectName)

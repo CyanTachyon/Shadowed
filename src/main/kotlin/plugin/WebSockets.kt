@@ -12,7 +12,7 @@ fun Application.installWebSockets() = install(WebSockets)
 {
     pingPeriod = 15.seconds
     timeout = 15.seconds
-    maxFrameSize = Long.MAX_VALUE
-    masking = false
+    maxFrameSize = 256 * 1024L
+    masking = true
     contentConverter = KotlinxWebsocketSerializationConverter(contentNegotiationJson)
 }

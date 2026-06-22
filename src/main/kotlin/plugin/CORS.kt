@@ -22,7 +22,7 @@ fun Application.installCORS() = install(CORS)
     allowNonSimpleContentTypes = true
     HttpMethod.DefaultMethods.forEach { allowMethod(it) }
     allowCredentials = true
-    allowHeaders { true }
+    listOf("X-Auth-User", "X-Auth-Token", "Content-Type", "Authorization").forEach { allowHeader(it) }
 
     if (debug)
     {

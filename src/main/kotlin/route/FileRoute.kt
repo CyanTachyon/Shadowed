@@ -65,25 +65,20 @@ fun Route.fileRoute()
     post("/send_file")
     {
         val chat = call.request.header("X-Chat-Id")?.toIntOrNull()?.let(::ChatId)
-        val username = call.request.header("X-Auth-User")
-        val passwordHash = call.request.header("X-Auth-Token")
         val messageType = call.request.header("X-Message-Type")?.let(MessageType::fromString)
         val metadata = call.request.header("X-Message-Metadata") ?: ""
-        val bodySize = call.request.header(HttpHeaders.ContentLength)?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.LengthRequired)
+        val bodySize = call.request.header(HttpHeaders.ContentLength)?.toIntOrNull() ?: return@post call.respondApiError("Content-Length required", HttpStatusCode.LengthRequired)
         if (messageType != null && bodySize > getMaxSize(messageType))
         {
-            call.respond(HttpStatusCode.PayloadTooLarge, "File size exceeds limit")
+            call.respondApiError("File size exceeds limit", HttpStatusCode.PayloadTooLarge)
             return@post
         }
         val fileBase64 = call.receiveStream()
-        if (chat == null || username == null || passwordHash == null || messageType == null)
-            return@post call.respond(HttpStatusCode.BadRequest)
-        val users = getKoin().get<Users>()
-        val userAuth = users.getUserByUsername(username)
-        if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            return@post call.respond(HttpStatusCode.Unauthorized)
+        if (chat == null || messageType == null)
+            return@post call.respondApiError("Missing chat or message type", HttpStatusCode.BadRequest)
+        val userAuth = call.authenticateSession() ?: return@post call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
         if (!getKoin().get<ChatMembers>().isMember(chat, userAuth.id))
-            return@post call.respond(HttpStatusCode.Forbidden)
+            return@post call.respondApiError("Not a chat member", HttpStatusCode.Forbidden)
         val messages = getKoin().get<Messages>()
         val burnTime = getKoin().get<Chats>().getChat(chat)?.burnTime
         val messageId = messages.addChatMessage(
@@ -98,7 +93,7 @@ fun Route.fileRoute()
         getKoin().get<ChatMembers>().incrementUnread(chat, userAuth.id)
         getKoin().get<ChatMembers>().resetUnread(chat, userAuth.id)
         FileUtils.saveChatFile(messageId, fileBase64)
-        call.respond(
+        call.respondApi(
             buildJsonObject()
             {
                 put("messageId", messageId)
@@ -136,26 +131,18 @@ fun Route.fileRoute()
             val totalSize: Long
         )
 
-        val username = call.request.header("X-Auth-User")
-        val passwordHash = call.request.header("X-Auth-Token")
-        if (username == null || passwordHash == null)
-            return@post call.respond(HttpStatusCode.BadRequest, "Missing auth headers")
-
-        val users = getKoin().get<Users>()
-        val userAuth = users.getUserByUsername(username)
-        if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            return@post call.respond(HttpStatusCode.Unauthorized)
+        val userAuth = call.authenticateSession() ?: return@post call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
 
         val request = call.receive<InitRequest>()
         val messageType = MessageType.fromString(request.messageType)
 
         // 验证聊天权限
         if (!getKoin().get<ChatMembers>().isMember(request.chatId, userAuth.id))
-            return@post call.respond(HttpStatusCode.Forbidden)
+            return@post call.respondApiError("Not a chat member", HttpStatusCode.Forbidden)
 
         // 验证文件大小
         if (request.totalSize > getMaxSize(messageType))
-            return@post call.respond(HttpStatusCode.PayloadTooLarge, "File size exceeds limit")
+            return@post call.respondApiError("File size exceeds limit", HttpStatusCode.PayloadTooLarge)
 
         // 创建上传任务
         val uploadId = UUID.randomUUID().toString()
@@ -174,7 +161,7 @@ fun Route.fileRoute()
         // 创建分片目录
         FileUtils.getUploadDir(uploadId)
 
-        call.respond(
+        call.respondApi(
             buildJsonObject()
             {
                 put("uploadId", uploadId)
@@ -186,31 +173,23 @@ fun Route.fileRoute()
     // 上传分片
     post("/upload/{uploadId}/chunk/{chunkIndex}")
     {
-        val uploadId = call.pathParameters["uploadId"] ?: return@post call.respond(HttpStatusCode.BadRequest)
-        val chunkIndex = call.pathParameters["chunkIndex"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest)
-        val username = call.request.header("X-Auth-User")
-        val passwordHash = call.request.header("X-Auth-Token")
-        if (username == null || passwordHash == null)
-            return@post call.respond(HttpStatusCode.BadRequest, "Missing auth headers")
+        val uploadId = call.pathParameters["uploadId"] ?: return@post call.respondApiError("Invalid upload id", HttpStatusCode.BadRequest)
+        val chunkIndex = call.pathParameters["chunkIndex"]?.toIntOrNull() ?: return@post call.respondApiError("Invalid chunk index", HttpStatusCode.BadRequest)
+        val userAuth = call.authenticateSession() ?: return@post call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
 
-        val users = getKoin().get<Users>()
-        val userAuth = users.getUserByUsername(username)
-        if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            return@post call.respond(HttpStatusCode.Unauthorized)
-
-        val taskInfo = uploadTasks[uploadId] ?: return@post call.respond(HttpStatusCode.NotFound, "Upload task not found")
+        val taskInfo = uploadTasks[uploadId] ?: return@post call.respondApiError("Upload task not found", HttpStatusCode.NotFound)
         if (taskInfo.userId != userAuth.id)
-            return@post call.respond(HttpStatusCode.Forbidden)
+            return@post call.respondApiError("Not authorized", HttpStatusCode.Forbidden)
 
         if (chunkIndex < 0 || chunkIndex >= taskInfo.totalChunks)
-            return@post call.respond(HttpStatusCode.BadRequest, "Invalid chunk index")
+            return@post call.respondApiError("Invalid chunk index", HttpStatusCode.BadRequest)
 
         // 保存分片
         val chunkData = call.receiveStream()
         FileUtils.saveChunk(uploadId, chunkIndex, chunkData)
 
         val uploadedChunks = FileUtils.getUploadedChunks(uploadId)
-        call.respond(
+        call.respondApi(
             buildJsonObject()
             {
                 put("chunkIndex", chunkIndex)
@@ -222,23 +201,15 @@ fun Route.fileRoute()
     // 查询上传状态
     get("/upload/{uploadId}/status")
     {
-        val uploadId = call.pathParameters["uploadId"] ?: return@get call.respond(HttpStatusCode.BadRequest)
-        val username = call.request.header("X-Auth-User")
-        val passwordHash = call.request.header("X-Auth-Token")
-        if (username == null || passwordHash == null)
-            return@get call.respond(HttpStatusCode.BadRequest, "Missing auth headers")
+        val uploadId = call.pathParameters["uploadId"] ?: return@get call.respondApiError("Invalid upload id", HttpStatusCode.BadRequest)
+        val userAuth = call.authenticateSession() ?: return@get call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
 
-        val users = getKoin().get<Users>()
-        val userAuth = users.getUserByUsername(username)
-        if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            return@get call.respond(HttpStatusCode.Unauthorized)
-
-        val taskInfo = uploadTasks[uploadId] ?: return@get call.respond(HttpStatusCode.NotFound, "Upload task not found")
+        val taskInfo = uploadTasks[uploadId] ?: return@get call.respondApiError("Upload task not found", HttpStatusCode.NotFound)
         if (taskInfo.userId != userAuth.id)
-            return@get call.respond(HttpStatusCode.Forbidden)
+            return@get call.respondApiError("Not authorized", HttpStatusCode.Forbidden)
 
         val uploadedChunks = FileUtils.getUploadedChunks(uploadId)
-        call.respond(
+        call.respondApi(
             buildJsonObject()
             {
                 put("uploadId", uploadId)
@@ -252,25 +223,17 @@ fun Route.fileRoute()
     // 完成上传
     post("/upload/{uploadId}/complete")
     {
-        val uploadId = call.pathParameters["uploadId"] ?: return@post call.respond(HttpStatusCode.BadRequest)
-        val username = call.request.header("X-Auth-User")
-        val passwordHash = call.request.header("X-Auth-Token")
-        if (username == null || passwordHash == null)
-            return@post call.respond(HttpStatusCode.BadRequest, "Missing auth headers")
+        val uploadId = call.pathParameters["uploadId"] ?: return@post call.respondApiError("Invalid upload id", HttpStatusCode.BadRequest)
+        val userAuth = call.authenticateSession() ?: return@post call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
 
-        val users = getKoin().get<Users>()
-        val userAuth = users.getUserByUsername(username)
-        if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            return@post call.respond(HttpStatusCode.Unauthorized)
-
-        val taskInfo = uploadTasks[uploadId] ?: return@post call.respond(HttpStatusCode.NotFound, "Upload task not found")
+        val taskInfo = uploadTasks[uploadId] ?: return@post call.respondApiError("Upload task not found", HttpStatusCode.NotFound)
         if (taskInfo.userId != userAuth.id)
-            return@post call.respond(HttpStatusCode.Forbidden)
+            return@post call.respondApiError("Not authorized", HttpStatusCode.Forbidden)
 
         // 检查是否所有分片都已上传
         val uploadedChunks = FileUtils.getUploadedChunks(uploadId)
         if (uploadedChunks.size != taskInfo.totalChunks)
-            return@post call.respond(HttpStatusCode.BadRequest, "Not all chunks uploaded: ${uploadedChunks.size}/${taskInfo.totalChunks}")
+            return@post call.respondApiError("Not all chunks uploaded: ${uploadedChunks.size}/${taskInfo.totalChunks}", HttpStatusCode.BadRequest)
 
         val messages = getKoin().get<Messages>()
 
@@ -290,7 +253,7 @@ fun Route.fileRoute()
         {
             // 合并失败，删除消息记录
             messages.deleteMessage(messageId)
-            return@post call.respond(HttpStatusCode.InternalServerError, "Failed to merge chunks")
+            return@post call.respondApiError("Failed to merge chunks", HttpStatusCode.InternalServerError)
         }
 
         // 更新聊天时间和未读计数
@@ -301,7 +264,7 @@ fun Route.fileRoute()
         // 移除上传任务
         uploadTasks.remove(uploadId)
 
-        call.respond(
+        call.respondApi(
             buildJsonObject()
             {
                 put("messageId", messageId)
@@ -330,32 +293,35 @@ fun Route.fileRoute()
     // 取消上传
     delete("/upload/{uploadId}")
     {
-        val uploadId = call.pathParameters["uploadId"] ?: return@delete call.respond(HttpStatusCode.BadRequest)
-        val username = call.request.header("X-Auth-User")
-        val passwordHash = call.request.header("X-Auth-Token")
-        if (username == null || passwordHash == null)
-            return@delete call.respond(HttpStatusCode.BadRequest, "Missing auth headers")
-
-        val users = getKoin().get<Users>()
-        val userAuth = users.getUserByUsername(username)
-        if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            return@delete call.respond(HttpStatusCode.Unauthorized)
+        val uploadId = call.pathParameters["uploadId"] ?: return@delete call.respondApiError("Invalid upload id", HttpStatusCode.BadRequest)
+        val userAuth = call.authenticateSession() ?: return@delete call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
 
         val taskInfo = uploadTasks[uploadId]
         if (taskInfo != null && taskInfo.userId != userAuth.id)
-            return@delete call.respond(HttpStatusCode.Forbidden)
+            return@delete call.respondApiError("Not authorized", HttpStatusCode.Forbidden)
 
         // 删除分片目录
         FileUtils.getUploadDir(uploadId).deleteRecursively()
         uploadTasks.remove(uploadId)
 
-        call.respond(HttpStatusCode.OK)
+        call.respondApi(Unit)
     }
 
     get("/file/{messageId}")
     {
-        val messageId = call.pathParameters["messageId"]?.toLongOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest)
-        val fileBytes = FileUtils.getChatFile(messageId) ?: return@get call.respond(HttpStatusCode.NotFound)
+        val messageId = call.pathParameters["messageId"]?.toLongOrNull() ?: return@get call.respondApiError("Invalid message id", HttpStatusCode.BadRequest)
+        val username = call.request.header("X-Auth-User")
+        val passwordHash = call.request.header("X-Auth-Token")
+        if (username == null || passwordHash == null)
+            return@get call.respondApiError("Missing auth headers", HttpStatusCode.BadRequest)
+        val users = getKoin().get<Users>()
+        val userAuth = users.getUserByUsername(username)
+        if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
+            return@get call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
+        val message = getKoin().get<Messages>().getMessage(messageId) ?: return@get call.respondApiError("Message not found", HttpStatusCode.NotFound)
+        if (!getKoin().get<ChatMembers>().isMember(message.chatId, userAuth.id))
+            return@get call.respondApiError("Not a chat member", HttpStatusCode.Forbidden)
+        val fileBytes = FileUtils.getChatFile(messageId) ?: return@get call.respondApiError("File not found", HttpStatusCode.NotFound)
         val bytes = fileBytes.readBytes()
         call.response.header(HttpHeaders.CacheControl, "max-age=${30*24*60*60}") // 30 days
         call.respondBytes(bytes, ContentType.Text.Plain)

@@ -4,11 +4,14 @@ import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.serialization.json.*
 import moe.tachyon.shadowed.contentNegotiationJson
+import moe.tachyon.shadowed.database.Sessions
 import moe.tachyon.shadowed.database.Users
 import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.route.SessionManager
 import moe.tachyon.shadowed.route.getKoin
 import moe.tachyon.shadowed.route.verifyPassword
+
+private val logger = moe.tachyon.shadowed.logger.ShadowedLogger.getLogger()
 
 object LoginHandler : LoginPacketHandler
 {
@@ -17,13 +20,10 @@ object LoginHandler : LoginPacketHandler
         packetData: String
     ): User?
     {
-        val (username, password) = runCatching()
+        val json = runCatching()
         {
-            val json = contentNegotiationJson.parseToJsonElement(packetData)
-            val user = json.jsonObject["username"]!!.jsonPrimitive.content
-            val pass = json.jsonObject["password"]!!.jsonPrimitive.content
-            Pair(user, pass)
-        }.getOrNull() ?: run()
+            contentNegotiationJson.parseToJsonElement(packetData).jsonObject
+        }.onFailure { logger.warning("Packet parse failed in LoginHandler: ${it.message}", it) }.getOrNull() ?: run()
         {
             val response = buildJsonObject()
             {
@@ -34,7 +34,50 @@ object LoginHandler : LoginPacketHandler
             session.send(contentNegotiationJson.encodeToString(response))
             return null
         }
-        
+
+        val username = json["username"]?.jsonPrimitive?.content
+        val password = json["password"]?.jsonPrimitive?.content
+        val reconnectToken = json["sessionToken"]?.jsonPrimitive?.content
+
+        if (username == null)
+        {
+            val response = buildJsonObject()
+            {
+                put("packet", "login_result")
+                put("success", false)
+                put("error", "Login failed: Username required")
+            }
+            session.send(contentNegotiationJson.encodeToString(response))
+            return null
+        }
+
+        if (reconnectToken != null)
+        {
+            val userId = getKoin().get<Sessions>().verify(reconnectToken)
+            val user = userId?.let { getKoin().get<Users>().getUser(it) }
+            if (user == null || user.username != username)
+            {
+                val response = buildJsonObject()
+                {
+                    put("packet", "login_result")
+                    put("success", false)
+                    put("error", "Login failed: Invalid or expired session")
+                }
+                session.send(contentNegotiationJson.encodeToString(response))
+                return null
+            }
+            SessionManager.addSession(user.id, session)
+            val response = buildJsonObject()
+            {
+                put("packet", "login_result")
+                put("success", true)
+                put("user", contentNegotiationJson.encodeToJsonElement(user))
+                put("sessionToken", reconnectToken)
+            }
+            session.send(contentNegotiationJson.encodeToString(response))
+            return user
+        }
+
         val user = getKoin().get<Users>().getUserByUsername(username) ?: run()
         {
             val response = buildJsonObject()
@@ -46,8 +89,8 @@ object LoginHandler : LoginPacketHandler
             session.send(contentNegotiationJson.encodeToString(response))
             return null
         }
-        
-        if (!verifyPassword(password, user.password))
+
+        if (password == null || !verifyPassword(password, user.password))
         {
             val response = buildJsonObject()
             {
@@ -58,14 +101,16 @@ object LoginHandler : LoginPacketHandler
             session.send(contentNegotiationJson.encodeToString(response))
             return null
         }
-        
+
         SessionManager.addSession(user.id, session)
 
+        val sessionToken = getKoin().get<Sessions>().create(user.id)
         val response = buildJsonObject()
         {
             put("packet", "login_result")
             put("success", true)
             put("user", contentNegotiationJson.encodeToJsonElement(user))
+            put("sessionToken", sessionToken)
         }
         session.send(contentNegotiationJson.encodeToString(response))
         return user
@@ -86,7 +131,7 @@ object GetPublicKeyByUsernameHandler : PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["username"]!!.jsonPrimitive.content
-        }.getOrNull() ?: return
+        }.onFailure { logger.warning("Packet parse failed in GetPublicKeyByUsernameHandler: ${it.message}", it) }.getOrNull() ?: return
 
         val user = getKoin().get<Users>().getUserByUsername(username)
 
@@ -118,7 +163,7 @@ object UpdateSignatureHandler : PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["signature"]!!.jsonPrimitive.content
-        }.getOrNull() ?: return session.sendError("Invalid signature format")
+        }.onFailure { logger.warning("Packet parse failed in UpdateSignatureHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Invalid signature format")
 
         // Limit signature length
         if (signature.length > 100)
