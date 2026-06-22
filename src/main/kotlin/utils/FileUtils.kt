@@ -18,6 +18,7 @@ object FileUtils
     val groupAvatarDir = File(dataDir, "group_avatars").apply { mkdirs() }
     val chatFilesDir = File(dataDir, "chat_files").apply { mkdirs() }
     val uploadChunksDir = File(dataDir, "upload_chunks").apply { mkdirs() }
+    val forumFilesDir = File(dataDir, "forum_files").apply { mkdirs() }
 
     suspend fun getAvatar(user: UserId): BufferedImage? = runCatching()
     {
@@ -173,5 +174,34 @@ object FileUtils
             logger.info("Deleted file for message $messageId")
         }
         return@withContext deleted
+    }
+
+    // ==================== Forum Files ====================
+
+    suspend fun saveForumFile(attachmentId: Long, bytes: InputStream)
+    {
+        val file = File(forumFilesDir, "$attachmentId.dat")
+        withContext(Dispatchers.IO)
+        {
+            forumFilesDir.mkdirs()
+            bytes.use { input ->
+                file.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        }
+    }
+
+    fun getForumFile(attachmentId: Long): File?
+    {
+        val file = File(forumFilesDir, "$attachmentId.dat")
+        return if (file.exists()) file else null
+    }
+
+    suspend fun deleteForumFile(attachmentId: Long): Boolean = withContext(Dispatchers.IO)
+    {
+        val file = File(forumFilesDir, "$attachmentId.dat")
+        if (!file.exists()) return@withContext false
+        file.delete()
     }
 }

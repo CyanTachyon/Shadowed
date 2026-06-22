@@ -13,5 +13,6 @@ fun Application.router() = routing()
         userRoute()
         fileRoute()
         webSocketRoute()
+        forumRoute()
     }
 }
