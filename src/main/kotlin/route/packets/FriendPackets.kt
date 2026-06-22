@@ -9,6 +9,8 @@ import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.database.*
 import moe.tachyon.shadowed.route.*
 
+private val logger = moe.tachyon.shadowed.logger.ShadowedLogger.getLogger()
+
 object GetFriendsHandler : PacketHandler
 {
     override val packetName = "get_friends"
@@ -78,7 +80,7 @@ object SendFriendRequestHandler : PacketHandler
             val u = json.jsonObject["targetUsername"]!!.jsonPrimitive.content
             val m = json.jsonObject["message"]?.jsonPrimitive?.content
             Pair(u, m)
-        }.getOrNull() ?: return session.sendError("Send friend request failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in SendFriendRequestHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Send friend request failed: Invalid packet format")
 
         if (targetUsername.equals(loginUser.username, ignoreCase = true))
             return session.sendError("Cannot send friend request to yourself")
@@ -137,7 +139,7 @@ object AcceptFriendRequestHandler : PacketHandler
             val kfr = json.jsonObject["keyForRequester"]!!.jsonPrimitive.content
             val kfs = json.jsonObject["keyForSelf"]!!.jsonPrimitive.content
             Triple(id, kfr, kfs)
-        }.getOrNull() ?: return session.sendError("Accept friend request failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in AcceptFriendRequestHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Accept friend request failed: Invalid packet format")
 
         val friendRequests = getKoin().get<FriendRequests>()
         val friends = getKoin().get<Friends>()
@@ -160,8 +162,8 @@ object AcceptFriendRequestHandler : PacketHandler
             return session.sendError("Already friends with this user")
         }
 
-        // Accept the request
-        friendRequests.acceptRequest(requestId)
+        val accepted = friendRequests.acceptRequest(requestId)
+        if (!accepted) return session.sendError("Friend request is no longer pending")
 
         // Create the friendship (accepting user is loginUser)
         val chatId = friends.addFriend(request.fromUser, loginUser.id)
@@ -215,7 +217,7 @@ object RejectFriendRequestHandler : PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["requestId"]!!.jsonPrimitive.int
-        }.getOrNull() ?: return session.sendError("Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in RejectFriendRequestHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Invalid packet format")
 
         val friendRequests = getKoin().get<FriendRequests>()
 
@@ -229,7 +231,8 @@ object RejectFriendRequestHandler : PacketHandler
         if (request.status != "PENDING")
             return session.sendError("Friend request is no longer pending")
 
-        friendRequests.rejectRequest(requestId)
+        val rejected = friendRequests.rejectRequest(requestId)
+        if (!rejected) return session.sendError("Friend request is no longer pending")
 
         session.sendSuccess("Friend request rejected")
 
@@ -288,7 +291,7 @@ object UpdateNicknameHandler : PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["nickname"]?.takeIf { it !is JsonNull }?.jsonPrimitive?.content
-        }.getOrNull()
+        }.onFailure { logger.warning("Packet parse failed in UpdateNicknameHandler: ${it.message}", it) }.getOrNull()
 
         getKoin().get<Users>().updateNickname(loginUser.id, nickname)
         session.sendSuccess("Nickname updated")
@@ -314,7 +317,7 @@ object UpdateFriendRemarkHandler : PacketHandler
             val id = json.jsonObject["friendId"]!!.jsonPrimitive.int
             val r = json.jsonObject["remark"]?.takeIf { it !is JsonNull }?.jsonPrimitive?.content
             Pair(id, r)
-        }.getOrNull() ?: return session.sendError("Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in UpdateFriendRemarkHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Invalid packet format")
 
         val friends = getKoin().get<Friends>()
         
@@ -345,7 +348,7 @@ object AddFriendHandler : PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["targetUsername"]!!.jsonPrimitive.content
-        }.getOrNull() ?: return session.sendError("Add friend failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in AddFriendHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Add friend failed: Invalid packet format")
 
         if (targetUsername.equals(loginUser.username, ignoreCase = true))
             return session.sendError("Cannot add yourself")

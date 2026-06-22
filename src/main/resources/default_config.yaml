@@ -45,6 +45,23 @@ database:
     # 数据库懒惰初始化
     lazyInit: true
 
+  # HikariCP 连接池调优 (这些值与历史硬编码默认值一致)
+  hikari:
+    maximumPoolSize: 10
+    minimumIdle: 2
+    connectionTimeout: 30000
+    idleTimeout: 600000
+    maxLifetime: 1800000
+    keepaliveTime: 60000
+    transactionIsolation: TRANSACTION_REPEATABLE_READ
+
+  # Flyway 数据库迁移 (仅 PostgreSQL; SQLite 为开发用, 不会被迁移)
+  flyway:
+    enabled: true
+    baselineOnMigrate: true
+    baselineVersion: "1"
+    locations: ["classpath:db/migration"]
+
 # 最大图片大小, 单位: 字节
 maxImageSize: 10485760 # 10MB
 

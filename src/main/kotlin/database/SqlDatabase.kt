@@ -12,6 +12,7 @@ import moe.tachyon.shadowed.console.SimpleAnsiColor.Companion.RED
 import moe.tachyon.shadowed.dataClass.*
 import moe.tachyon.shadowed.logger.ShadowedLogger
 import moe.tachyon.shadowed.utils.Power.shutdown
+import org.flywaydb.core.Flyway
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -54,8 +55,6 @@ abstract class SqlDao<T: Table>(table: T): KoinComponent
     {
         transaction(database)
         {
-            @Suppress("DEPRECATION")
-            SchemaUtils.createMissingTablesAndColumns(table)
             init()
         }
         table
@@ -80,10 +79,21 @@ object SqlDatabase: KoinComponent
         Broadcasts::class,
         ChatMembers::class,
         Chats::class,
+        ForumAttachments::class,
+        ForumBoards::class,
+        ForumInvitations::class,
+        ForumNotifications::class,
+        ForumPosts::class,
+        ForumPrivateEpochKeys::class,
+        ForumPrivateEpochs::class,
+        ForumProtectKeys::class,
+        ForumReactions::class,
+        ForumTopics::class,
         FriendRequests::class,
         Friends::class,
         GroupInvitations::class,
         Messages::class,
+        Sessions::class,
         Users::class,
     )
 
@@ -95,14 +105,19 @@ object SqlDatabase: KoinComponent
         driver: String,
         user: String?,
         password: String?
-    ) = HikariDataSource(HikariConfig().apply {
+    ): HikariDataSource = HikariDataSource(HikariConfig().apply {
         this.driverClassName = driver
         this.jdbcUrl = url
         if (user != null) this.username = user
         if (password != null) this.password = password
-        this.maximumPoolSize = 3
+        this.maximumPoolSize = config.propertyOrNull("database.hikari.maximumPoolSize")?.getString()?.toIntOrNull() ?: 10
+        this.minimumIdle = config.propertyOrNull("database.hikari.minimumIdle")?.getString()?.toIntOrNull() ?: 2
+        this.connectionTimeout = config.propertyOrNull("database.hikari.connectionTimeout")?.getString()?.toLongOrNull() ?: 30000
+        this.idleTimeout = config.propertyOrNull("database.hikari.idleTimeout")?.getString()?.toLongOrNull() ?: 600000
+        this.maxLifetime = config.propertyOrNull("database.hikari.maxLifetime")?.getString()?.toLongOrNull() ?: 1800000
+        this.keepaliveTime = config.propertyOrNull("database.hikari.keepaliveTime")?.getString()?.toLongOrNull() ?: 60000
         this.isAutoCommit = false
-        this.transactionIsolation = "TRANSACTION_REPEATABLE_READ"
+        this.transactionIsolation = config.propertyOrNull("database.hikari.transactionIsolation")?.getString() ?: "TRANSACTION_REPEATABLE_READ"
         this.poolName = "DatabasePool"
         validate()
     })
@@ -148,8 +163,26 @@ object SqlDatabase: KoinComponent
             driver
         }
         else driver0
-
         logger.info("Load database configuration. url: $url, driver: $driver, user: $user")
+
+        if (url.startsWith("jdbc:postgresql:")) {
+            val flywayEnabled = config.propertyOrNull("database.flyway.enabled")?.getString()?.toBoolean() ?: true
+            if (flywayEnabled) {
+                val baselineOnMigrate = config.propertyOrNull("database.flyway.baselineOnMigrate")?.getString()?.toBoolean() ?: true
+                val baselineVersion = config.propertyOrNull("database.flyway.baselineVersion")?.getString() ?: "1"
+                logger.info("Running Flyway migrations (baselineOnMigrate=$baselineOnMigrate, baselineVersion=$baselineVersion)")
+                Flyway.configure()
+                    .dataSource(url, user ?: "", password ?: "")
+                    .baselineOnMigrate(baselineOnMigrate)
+                    .baselineVersion(baselineVersion)
+                    .locations("classpath:db/migration")
+                    .load()
+                    .migrate()
+            }
+        } else {
+            logger.warning("Flyway skipped: driver is not PostgreSQL (SQLite is dev-only, not migrated).")
+        }
+
         val module = module(!lazyInit)
         {
             named("sql-database-impl")

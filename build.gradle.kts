@@ -10,6 +10,7 @@ plugins {
     kotlin("jvm") version "2.3.0"
     kotlin("plugin.serialization") version "2.3.0"
     id("io.ktor.plugin") version "3.3.2"
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.2"
 }
 
 group = "moe.tachyon.shadowed"
@@ -38,6 +39,7 @@ dependencies {
     implementation("io.ktor:ktor-server-rate-limit-jvm") // 限流
     implementation("io.ktor:ktor-server-websockets") // websocket
     implementation("io.ktor:ktor-server-auto-head-response-jvm") // 自动响应HEAD请求
+    implementation("io.ktor:ktor-server-default-headers-jvm") // 默认响应头(安全头)
     implementation("io.ktor:ktor-server-double-receive-jvm") // 重复接收
     implementation("io.ktor:ktor-server-call-logging-jvm") // 日志
     implementation("io.ktor:ktor-server-sse") // Server-Sent Events (SSE) 支持
@@ -73,6 +75,11 @@ dependencies {
     val postgresql_version: String by project
     implementation("org.postgresql:postgresql:$postgresql_version")
 
+    // flyway (PostgreSQL-only; SQLite is dev-only and not migrated)
+    val flyway_version: String by project
+    implementation("org.flywaydb:flyway-core:$flyway_version")
+    implementation("org.flywaydb:flyway-database-postgresql:$flyway_version")
+
     // koin
     implementation(platform("io.insert-koin:koin-bom:$koin_version"))
     implementation("io.insert-koin:koin-core")
@@ -81,6 +88,19 @@ dependencies {
 
     implementation("me.nullaqua:BluestarAPI-kotlin:4.3.7")
     implementation("me.nullaqua:BluestarAPI-kotlin-reflect:4.3.7")
+
+    // test
+    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
+    testImplementation("io.ktor:ktor-server-test-host")
+    testImplementation("io.ktor:ktor-client-core")
+    testImplementation("io.ktor:ktor-client-cio")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+    testImplementation("com.charleskorn.kaml:kaml:0.80.0")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 kotlin {
@@ -102,6 +122,17 @@ ktor {
     fatJar {
         allowZip64 = true
         archiveFileName = "Shadowed.jar"
+    }
+}
+
+ktlint {
+    version.set("1.3.1")
+    android.set(false)
+    outputToConsole.set(true)
+    ignoreFailures.set(true)
+    enableExperimentalRules.set(true)
+    filter {
+        exclude("**/build/**")
     }
 }
 

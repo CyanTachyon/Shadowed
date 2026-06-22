@@ -165,7 +165,7 @@ class FriendRequests : SqlDao<FriendRequests.FriendRequestTable>(FriendRequestTa
     {
         table.selectAll().where {
             ((table.fromUser eq userA) and (table.toUser eq userB) or
-             (table.fromUser eq userB) and (table.toUser eq userA)) and
+             ((table.fromUser eq userB) and (table.toUser eq userA))) and
             (table.status eq "PENDING")
         }.count() > 0
     }

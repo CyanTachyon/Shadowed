@@ -6,3 +6,18 @@ ktor:
 
 # 通过gradle的插件处理, 会自动替换为当前项目的版本号
 version: ${version}
+
+database:
+  hikari:
+    maximumPoolSize: 10
+    minimumIdle: 2
+    connectionTimeout: 30000
+    idleTimeout: 600000
+    maxLifetime: 1800000
+    keepaliveTime: 60000
+    transactionIsolation: TRANSACTION_REPEATABLE_READ
+  flyway:
+    enabled: true
+    baselineOnMigrate: true
+    baselineVersion: "1"
+    locations: ["classpath:db/migration"]
