@@ -3,10 +3,12 @@ package moe.tachyon.shadowed
 import com.charleskorn.kaml.Yaml
 import io.ktor.server.application.*
 import io.ktor.server.netty.*
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import moe.tachyon.shadowed.console.AnsiEffect
 import moe.tachyon.shadowed.console.Console.startConsoleCommandHandler
 import moe.tachyon.shadowed.console.SimpleAnsiColor
+import moe.tachyon.shadowed.database.Sessions
 import moe.tachyon.shadowed.database.SqlDatabase
 import moe.tachyon.shadowed.logger.ShadowedLogger
 import moe.tachyon.shadowed.plugin.autoHead.installAutoHead
@@ -21,7 +23,9 @@ import moe.tachyon.shadowed.plugin.statusPages.installStatusPages
 import moe.tachyon.shadowed.plugin.webSockets.installWebSockets
 import moe.tachyon.shadowed.service.BurnAfterReadService
 import moe.tachyon.shadowed.utils.Power
+import org.koin.ktor.ext.get
 import java.io.File
+import kotlin.concurrent.fixedRateTimer
 import kotlin.properties.Delegates
 
 lateinit var version: String
@@ -108,6 +112,10 @@ fun main(args: Array<String>)
     val resConfig = Loader.mergeConfigs(defaultConfig, customConfig)
     val tempFile = File.createTempFile("resConfig", ".yaml")
     tempFile.writeText(Yaml.default.encodeToString(resConfig))
+    // The merged config file contains DB credentials; wipe it on JVM exit.
+    Runtime.getRuntime().addShutdownHook(Thread {
+        runCatching { tempFile.delete() }
+    })
     val resArgs = args1 + "-config=${tempFile.absolutePath}"
     EngineMain.main(resArgs)
     ShadowedLogger.getLogger().info("main thread finished")
@@ -142,6 +150,15 @@ fun Application.init()
 
     // install database
     SqlDatabase.apply { this@init.init() }
+
+    // Periodic cleanup of expired session rows (Sessions.deleteExpired was previously
+    // defined but never invoked). Runs hourly on a daemon Timer; per-instance only.
+    val sessions = get<Sessions>()
+    fixedRateTimer("session-gc", daemon = true, period = 60L * 60L * 1000L)
+    {
+        runCatching { runBlocking { sessions.deleteExpired() } }
+            .onFailure { ShadowedLogger.getLogger().warning("Session GC failed: ${it.message}", it) }
+    }
 
     // Start burn-after-read message cleanup service
     BurnAfterReadService.start()

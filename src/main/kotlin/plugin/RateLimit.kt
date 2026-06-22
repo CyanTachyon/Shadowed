@@ -8,6 +8,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import moe.tachyon.shadowed.route.authenticateSession
 import java.util.concurrent.ConcurrentHashMap
 
 // In-memory only (no Redis); per-instance. Fine for single-instance deployments.
@@ -50,8 +51,8 @@ private val rateLimitPlugin = createApplicationPlugin("ShadowedRateLimit")
     onCall { call ->
         val path = call.request.path()
         val (category, max, windowMs) = classify(path) ?: return@onCall
-        val authed = call.request.headers["X-Auth-User"]
-        val identity = if (authed != null) "u:$authed" else "ip:${call.request.local.remoteHost}"
+        val authedUser = call.authenticateSession()
+        val identity = if (authedUser != null) "uid:${authedUser.id.value}" else "ip:${call.request.local.remoteHost}"
         val key = "$identity:$category"
         if (!consume(key, max, windowMs))
         {
@@ -62,6 +63,7 @@ private val rateLimitPlugin = createApplicationPlugin("ShadowedRateLimit")
                     put("message", "Rate limit exceeded. Try again later.")
                 }
             )
+            return@onCall
         }
     }
 }
