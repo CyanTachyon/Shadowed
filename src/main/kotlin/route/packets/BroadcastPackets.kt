@@ -9,6 +9,8 @@ import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.route.getKoin
 import moe.tachyon.shadowed.route.renewBroadcast
 
+private val logger = moe.tachyon.shadowed.logger.ShadowedLogger.getLogger()
+
 object SendBroadcastHandler : PacketHandler
 {
     override val packetName = "send_broadcast"
@@ -25,7 +27,7 @@ object SendBroadcastHandler : PacketHandler
             val message = json.jsonObject["message"]!!.jsonPrimitive.content
             val anon = json.jsonObject["anonymous"]!!.jsonPrimitive.boolean
             Pair(message, anon)
-        }.getOrNull() ?: return session.sendError("Broadcast failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in SendBroadcastHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Broadcast failed: Invalid packet format")
         
         val broadcasts = getKoin().get<Broadcasts>()
         val id = broadcasts.addBroadcast(
@@ -53,7 +55,7 @@ object GetBroadcastsHandler : PacketHandler
             val bef = json.jsonObject["before"]!!.jsonPrimitive.long
             val cnt = json.jsonObject["count"]!!.jsonPrimitive.int
             Triple(sys, bef, cnt)
-        }.getOrNull() ?: return session.sendError("Get broadcasts failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in GetBroadcastsHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Get broadcasts failed: Invalid packet format")
 
         val broadcasts = getKoin().get<Broadcasts>().getBroadcasts(system, before, count)
         val response = buildJsonObject()

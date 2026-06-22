@@ -39,7 +39,7 @@ object CreateGroupHandler : PacketHandler
             val members = json.jsonObject["memberUsernames"]!!.jsonArray.map { it.jsonPrimitive.content }
             val keys = json.jsonObject["encryptedKeys"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
             Triple(name, members, keys)
-        }.getOrNull() ?: return session.sendError("Create group failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in CreateGroupHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Create group failed: Invalid packet format")
 
         // Validate all members exist and get their user objects
         val users = getKoin().get<Users>()
@@ -99,7 +99,7 @@ object AddMemberToChatHandler : PacketHandler
             val user = json.jsonObject["username"]!!.jsonPrimitive.content
             val key = json.jsonObject["encryptedKey"]!!.jsonPrimitive.content
             Triple(id, user, key)
-        }.getOrNull() ?: return session.sendError("Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in AddMemberToChatHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Invalid packet format")
 
         val chatId = ChatId(chatIdVal)
         val chats = getKoin().get<Chats>()
@@ -191,7 +191,7 @@ object HandleGroupInvitationHandler : PacketHandler
             val id = json.jsonObject["invitationId"]!!.jsonPrimitive.int
             val a = json.jsonObject["approve"]!!.jsonPrimitive.boolean
             Pair(id, a)
-        }.getOrNull() ?: return session.sendError("Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in HandleGroupInvitationHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Invalid packet format")
 
         val groupInvitations = getKoin().get<GroupInvitations>()
         val chats = getKoin().get<Chats>()
@@ -319,7 +319,7 @@ object SetRequireApprovalHandler : PacketHandler
             val id = json.jsonObject["chatId"]!!.jsonPrimitive.int
             val a = json.jsonObject["requireApproval"]!!.jsonPrimitive.boolean
             Pair(id, a)
-        }.getOrNull() ?: return session.sendError("Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in SetRequireApprovalHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Invalid packet format")
 
         val chatId = ChatId(chatIdVal)
         val chats = getKoin().get<Chats>()
@@ -356,7 +356,7 @@ object KickMemberFromChatHandler : PacketHandler
             val id = json.jsonObject["chatId"]!!.jsonPrimitive.int.toChatId()
             val user = json.jsonObject["username"]!!.jsonPrimitive.content
             Pair(id, user)
-        }.getOrNull() ?: return session.sendError("Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in KickMemberFromChatHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Invalid packet format")
         
         val chats = getKoin().get<Chats>()
         val chatMembers = getKoin().get<ChatMembers>()

@@ -56,7 +56,7 @@ object GetMomentsHandler : PacketHandler
             val b = json.jsonObject["before"]?.jsonPrimitive?.longOrNull?.let(Instant::fromEpochMilliseconds)
             val c = json.jsonObject["count"]?.jsonPrimitive?.intOrNull ?: 50
             Triple(uid, b, c)
-        }.getOrElse { Triple(null, null, 50) }
+        }.onFailure { logger.warning("Packet parse failed in GetMomentsHandler: ${it.message}", it) }.getOrElse { Triple(null, null, 50) }
 
         val messages = getKoin().get<Messages>()
         val chats = getKoin().get<Chats>()
@@ -160,7 +160,7 @@ object PostMomentHandler : PacketHandler
         val postData = runCatching()
         {
             contentNegotiationJson.decodeFromString<PostMoment>(packetData)
-        }.getOrNull() ?: return session.sendError("Post moment failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in PostMomentHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Post moment failed: Invalid packet format")
 
         val chats = getKoin().get<Chats>()
         val chatMembers = getKoin().get<ChatMembers>()
@@ -230,7 +230,7 @@ object ToggleMomentPermissionHandler : PacketHandler
             val fid = json.jsonObject["friendId"]!!.jsonPrimitive.int.let(::UserId)
             val cv = json.jsonObject["canView"]!!.jsonPrimitive.boolean
             Pair(fid, cv)
-        }.getOrNull() ?: return session.sendError("Toggle moment permission failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in ToggleMomentPermissionHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Toggle moment permission failed: Invalid packet format")
 
         val friends = getKoin().get<Friends>()
         val chatMembers = getKoin().get<ChatMembers>()
@@ -285,7 +285,7 @@ object GetMomentPermissionHandler : PacketHandler
             val fid = json.jsonObject["friendId"]!!.jsonPrimitive.int.let(::UserId)
             val key = json.jsonObject["encryptedKey"]?.jsonPrimitive?.content
             Pair(fid, key)
-        }.getOrNull() ?: return session.sendError("Get moment permission failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in GetMomentPermissionHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Get moment permission failed: Invalid packet format")
 
         val friends = getKoin().get<Friends>()
         val chats = getKoin().get<Chats>()
@@ -388,7 +388,7 @@ object DeleteMomentHandler : PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["messageId"]!!.jsonPrimitive.long
-        }.getOrNull() ?: return session.sendError("Delete moment failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in DeleteMomentHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Delete moment failed: Invalid packet format")
 
         val messages = getKoin().get<Messages>()
         val chats = getKoin().get<Chats>()
@@ -435,7 +435,7 @@ object EditMomentHandler : PacketHandler
         val (messageId, newContent) = runCatching()
         {
             contentNegotiationJson.decodeFromString<EditMoment>(packetData)
-        }.getOrNull() ?: return session.sendError("Edit moment failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in EditMomentHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Edit moment failed: Invalid packet format")
 
         val messages = getKoin().get<Messages>()
         val chats = getKoin().get<Chats>()
@@ -482,7 +482,7 @@ object CommentMomentHandler : PacketHandler
         val (momentMessageId, content, type) = runCatching()
         {
             contentNegotiationJson.decodeFromString<CommentMoment>(packetData)
-        }.getOrNull() ?: return session.sendError("Comment moment failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in CommentMomentHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Comment moment failed: Invalid packet format")
 
         val messages = getKoin().get<Messages>()
         val chats = getKoin().get<Chats>()
@@ -545,7 +545,7 @@ object GetMomentCommentsHandler : PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["momentMessageId"]!!.jsonPrimitive.long
-        }.getOrNull() ?: return session.sendError("Get moment comments failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in GetMomentCommentsHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Get moment comments failed: Invalid packet format")
 
         val messages = getKoin().get<Messages>()
         val chats = getKoin().get<Chats>()

@@ -52,7 +52,7 @@ object GetMessagesHandler: PacketHandler
             val before = json.jsonObject["before"]?.jsonPrimitive?.longOrNull
             val limit = json.jsonObject["count"]!!.jsonPrimitive.int
             Triple(cid, before, limit)
-        }.getOrNull() ?: return session.sendError("Get messages failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in GetMessagesHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Get messages failed: Invalid packet format")
         
         if (!getKoin().get<ChatMembers>().isMember(chatId, loginUser.id))
             return session.sendError("Get messages failed: You are not a member of this chat")
@@ -94,7 +94,7 @@ object SendMessageHandler: PacketHandler
         val (chatId, message, type, replyTo, atUserIds) = runCatching()
         {
             contentNegotiationJson.decodeFromString<SendMessage>(packetData)
-        }.getOrNull() ?: return session.sendError("Send message failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in SendMessageHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Send message failed: Invalid packet format")
 
         val chats = getKoin().get<Chats>()
         val chatMembers = getKoin().get<ChatMembers>()
@@ -161,7 +161,10 @@ object GetChatDetailsHandler: PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
-        }.getOrNull() ?: return
+        }.onFailure { logger.warning("Packet parse failed in GetChatDetailsHandler: ${it.message}", it) }.getOrNull() ?: return
+
+        if (!getKoin().get<ChatMembers>().isMember(chatId, loginUser.id))
+            return session.sendError("Not a member of this chat")
 
         val chats = getKoin().get<Chats>()
         val chat = chats.getChat(chatId) ?: return
@@ -187,7 +190,7 @@ object RenameChatHandler: PacketHandler
             val id = json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
             val name = json.jsonObject["newName"]!!.jsonPrimitive.content
             id to name
-        }.getOrNull() ?: return
+        }.onFailure { logger.warning("Packet parse failed in RenameChatHandler: ${it.message}", it) }.getOrNull() ?: return
 
         val chats = getKoin().get<Chats>()
         val isOwner = chats.isChatOwner(chatId, loginUser.id)
@@ -235,7 +238,7 @@ object SetDoNotDisturb: PacketHandler
             val id = json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
             val dnd = json.jsonObject["doNotDisturb"]!!.jsonPrimitive.boolean
             id to dnd
-        }.getOrNull() ?: return
+        }.onFailure { logger.warning("Packet parse failed in SetDoNotDisturb: ${it.message}", it) }.getOrNull() ?: return
 
         val chatMembers = getKoin().get<ChatMembers>()
         if (!chatMembers.setDoNotDisturb(chatId, loginUser.id, doNotDisturb))
@@ -264,7 +267,7 @@ object EditMessageHandler: PacketHandler
         val (messageId, newContent, atUserIds) = runCatching()
         {
             contentNegotiationJson.decodeFromString<EditMessage>(packetData)
-        }.getOrNull() ?: return session.sendError("Edit message failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in EditMessageHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Edit message failed: Invalid packet format")
 
         val messages = getKoin().get<Messages>()
         val chatMembers = getKoin().get<ChatMembers>()
@@ -316,7 +319,7 @@ object SetBurnTimeHandler: PacketHandler
             val id = json.jsonObject["chatId"]!!.jsonPrimitive.int.let(::ChatId)
             val time = json.jsonObject["burnTime"]?.jsonPrimitive?.longOrNull
             id to time
-        }.getOrNull() ?: return session.sendError("Set burn time failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in SetBurnTimeHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Set burn time failed: Invalid packet format")
 
         val chats = getKoin().get<Chats>()
         val chatMembers = getKoin().get<ChatMembers>()
@@ -360,7 +363,7 @@ object MarkMessageReadHandler: PacketHandler
         {
             val json = contentNegotiationJson.parseToJsonElement(packetData)
             json.jsonObject["messageId"]!!.jsonPrimitive.long
-        }.getOrNull() ?: return session.sendError("Mark message read failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in MarkMessageReadHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Mark message read failed: Invalid packet format")
 
         val messages = getKoin().get<Messages>()
         val chatMembers = getKoin().get<ChatMembers>()
@@ -395,7 +398,7 @@ object ToggleReactionHandler: PacketHandler
             val id = json.jsonObject["messageId"]!!.jsonPrimitive.long
             val emoji = json.jsonObject["emoji"]!!.jsonPrimitive.content
             id to emoji
-        }.getOrNull() ?: return session.sendError("Toggle reaction failed: Invalid packet format")
+        }.onFailure { logger.warning("Packet parse failed in ToggleReactionHandler: ${it.message}", it) }.getOrNull() ?: return session.sendError("Toggle reaction failed: Invalid packet format")
 
         val messages = getKoin().get<Messages>()
         val chatMembers = getKoin().get<ChatMembers>()

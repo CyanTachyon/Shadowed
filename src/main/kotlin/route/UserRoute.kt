@@ -35,7 +35,7 @@ fun Route.userRoute()
 
             if (username == null || passwordHash == null)
             {
-                call.respond(HttpStatusCode.Unauthorized)
+                call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
                 return@post
             }
 
@@ -44,7 +44,7 @@ fun Route.userRoute()
 
             if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
             {
-                call.respond(HttpStatusCode.Unauthorized)
+                call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
                 return@post
             }
 
@@ -61,18 +61,18 @@ fun Route.userRoute()
                         val fileBytes = part.provider().readBuffer().readBytes()
                         val image = ImageIO.read(ByteArrayInputStream(fileBytes))
                         if (image != null) FileUtils.setAvatar(userAuth.id, image)
-                        else call.respond(HttpStatusCode.BadRequest, "Invalid image format")
+                        else call.respondApiError("Invalid image format")
                     }.getOrThrow()
                 }
                 part.dispose()
             }
 
-            call.respond(HttpStatusCode.OK)
+            call.respondApi(Unit)
         }
 
         get("/{id}/avatar")
         {
-            val id = call.parameters["id"]?.toUserIdOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val id = call.parameters["id"]?.toUserIdOrNull() ?: return@get call.respondApiError("Invalid user id", HttpStatusCode.BadRequest)
 
             val avatarImage = FileUtils.getAvatar(id)
 
@@ -103,13 +103,13 @@ fun Route.userRoute()
 
         get("/publicKey")
         {
-            val username = call.parameters["username"] ?: return@get call.respond(HttpStatusCode.BadRequest)
-            val user = getKoin().get<Users>().getUserByUsername(username) ?: return@get call.respond(HttpStatusCode.NotFound)
+            val username = call.parameters["username"] ?: return@get call.respondApiError("Invalid username", HttpStatusCode.BadRequest)
+            val user = getKoin().get<Users>().getUserByUsername(username) ?: return@get call.respondApiError("User not found", HttpStatusCode.NotFound)
             val response = buildJsonObject()
             {
                 put("publicKey", user.publicKey)
             }
-            call.respond(response)
+            call.respondApi(response)
         }
 
         get("/info")
@@ -123,7 +123,7 @@ fun Route.userRoute()
 
                 if (id == null)
                 {
-                    call.respond(HttpStatusCode.BadRequest)
+                    call.respondApiError("Invalid user id")
                     return@get
                 }
 
@@ -131,7 +131,7 @@ fun Route.userRoute()
 
                 if (user == null)
                 {
-                    call.respond(HttpStatusCode.NotFound)
+                    call.respondApiError("User not found", HttpStatusCode.NotFound)
                     return@get
                 }
 
@@ -143,7 +143,7 @@ fun Route.userRoute()
                     put("isDonor", user.isDonor)
                     put("nickname", user.nickname)
                 }
-                call.respond(response)
+                call.respondApi(response)
             }
             else if (username != null)
             {
@@ -151,7 +151,7 @@ fun Route.userRoute()
 
                 if (user == null)
                 {
-                    call.respond(HttpStatusCode.NotFound)
+                    call.respondApiError("User not found", HttpStatusCode.NotFound)
                     return@get
                 }
 
@@ -163,11 +163,11 @@ fun Route.userRoute()
                     put("isDonor", user.isDonor)
                     put("nickname", user.nickname)
                 }
-                call.respond(response)
+                call.respondApi(response)
             }
             else
             {
-                call.respond(HttpStatusCode.BadRequest)
+                call.respondApiError("Invalid request")
             }
         }
     }
@@ -182,7 +182,7 @@ fun Route.userRoute()
 
             if (chatId == null)
             {
-                call.respond(HttpStatusCode.BadRequest)
+                call.respondApiError("Invalid group id")
                 return@post
             }
 
@@ -192,7 +192,7 @@ fun Route.userRoute()
 
             if (username == null || passwordHash == null)
             {
-                call.respond(HttpStatusCode.Unauthorized)
+                call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
                 return@post
             }
 
@@ -201,21 +201,21 @@ fun Route.userRoute()
 
             if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
             {
-                call.respond(HttpStatusCode.Unauthorized)
+                call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
                 return@post
             }
 
             // Check if user is a member of this chat
             val chatMembers = getKoin().get<ChatMembers>()
             if (!chatMembers.isMember(chatId, userAuth.id))
-                return@post call.respond(HttpStatusCode.Forbidden)
+                return@post call.respondApiError("Not a chat member", HttpStatusCode.Forbidden)
 
             // Check if user is owner of group
             val chats = getKoin().get<Chats>()
             val chat = chats.getChat(chatId)
             if (chat == null || chat.owner != userAuth.id)
             {
-                call.respond(HttpStatusCode.Forbidden, "Only group owner can upload avatar")
+                call.respondApiError("Only group owner can upload avatar", HttpStatusCode.Forbidden)
                 return@post
             }
 
@@ -232,13 +232,13 @@ fun Route.userRoute()
                         val fileBytes = part.provider().readBuffer().readBytes()
                         val image = ImageIO.read(ByteArrayInputStream(fileBytes))
                         if (image != null) FileUtils.setGroupAvatar(chatId, image)
-                        else call.respond(HttpStatusCode.BadRequest, "Invalid image format")
+                        else call.respondApiError("Invalid image format")
                     }.getOrThrow()
                 }
                 part.dispose()
             }
 
-            call.respond(HttpStatusCode.OK)
+            call.respondApi(Unit)
         }
 
         get("/{id}/avatar")
@@ -248,7 +248,7 @@ fun Route.userRoute()
 
             if (chatId == null)
             {
-                call.respond(HttpStatusCode.BadRequest)
+                call.respondApiError("Invalid group id")
                 return@get
             }
 
