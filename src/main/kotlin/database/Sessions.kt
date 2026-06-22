@@ -52,6 +52,11 @@ class Sessions : SqlDao<Sessions.SessionTable>(SessionTable)
         table.deleteWhere { table.expiresAt lessEq now }
     }
 
+    suspend fun deleteByUserId(userId: UserId): Int = query()
+    {
+        table.deleteWhere { table.userId eq userId }
+    }
+
     private fun sha256(input: String): String
     {
         val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))

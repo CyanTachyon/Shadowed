@@ -10,6 +10,7 @@ import moe.tachyon.shadowed.dataClass.User
 import moe.tachyon.shadowed.route.SessionManager
 import moe.tachyon.shadowed.route.getKoin
 import moe.tachyon.shadowed.route.verifyPassword
+import moe.tachyon.shadowed.route.DUMMY_BCRYPT_HASH
 
 private val logger = moe.tachyon.shadowed.logger.ShadowedLogger.getLogger()
 
@@ -78,13 +79,15 @@ object LoginHandler : LoginPacketHandler
             return user
         }
 
-        val user = getKoin().get<Users>().getUserByUsername(username) ?: run()
+        val user = getKoin().get<Users>().getUserByUsername(username)
+        if (user == null)
         {
+            verifyPassword(password ?: "", DUMMY_BCRYPT_HASH)
             val response = buildJsonObject()
             {
                 put("packet", "login_result")
                 put("success", false)
-                put("error", "Login failed: User not found")
+                put("error", "Login failed: Invalid credentials")
             }
             session.send(contentNegotiationJson.encodeToString(response))
             return null
@@ -96,7 +99,7 @@ object LoginHandler : LoginPacketHandler
             {
                 put("packet", "login_result")
                 put("success", false)
-                put("error", "Login failed: Incorrect password")
+                put("error", "Login failed: Invalid credentials")
             }
             session.send(contentNegotiationJson.encodeToString(response))
             return null
