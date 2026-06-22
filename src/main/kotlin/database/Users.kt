@@ -32,6 +32,12 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         val signature = text("signature").default("")
         val donationAmount = long("donation_amount").default(0)
         val nickname = varchar("nickname", 50).nullable().default(null)
+        // C-3: per-user PBKDF2 parameters. Legacy accounts have pbkdf2Salt = NULL,
+        // meaning the client uses the username as the salt with iterations = 100000.
+        // New accounts set pbkdf2Salt to a random base64-encoded 16-byte value and
+        // pbkdf2Iterations >= 600000.
+        val pbkdf2Salt = varchar("pbkdf2_salt", 64).nullable().default(null)
+        val pbkdf2Iterations = integer("pbkdf2_iterations").default(100000)
 
         // Forum fields
         val forumZone = varchar("forum_zone", 10).default(ForumZone.PUBLIC.name)
@@ -50,6 +56,8 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         signature = row[table.signature],
         isDonor = row[table.donationAmount] > 0,
         nickname = row[table.nickname],
+        pbkdf2Salt = row[table.pbkdf2Salt],
+        pbkdf2Iterations = row[table.pbkdf2Iterations],
     )
 
     suspend fun getUserForumZone(userId: UserId): ForumZone = query()
@@ -129,7 +137,9 @@ class Users: SqlDao<Users.UserTable>(UserTable)
         username: String,
         encryptedPassword: String,
         publicKey: String,
-        encryptedPrivateKey: String
+        encryptedPrivateKey: String,
+        pbkdf2Salt: String? = null,
+        pbkdf2Iterations: Int = 100000
     ): UserId? = query()
     {
         insertIgnoreAndGetId()
@@ -138,6 +148,8 @@ class Users: SqlDao<Users.UserTable>(UserTable)
             it[this.password] = encryptedPassword
             it[this.publicKey] = publicKey
             it[this.privateKey] = encryptedPrivateKey
+            it[this.pbkdf2Salt] = pbkdf2Salt
+            it[this.pbkdf2Iterations] = pbkdf2Iterations
         }?.value
     }
     
@@ -161,13 +173,17 @@ class Users: SqlDao<Users.UserTable>(UserTable)
     suspend fun updatePasswordAndKey(
         userId: UserId,
         newEncryptedPassword: String,
-        newEncryptedPrivateKey: String
+        newEncryptedPrivateKey: String,
+        newPbkdf2Salt: String? = null,
+        newPbkdf2Iterations: Int = 100000
     ) = query()
     {
         update({ table.id eq userId })
         {
             it[password] = newEncryptedPassword
             it[privateKey] = newEncryptedPrivateKey
+            it[pbkdf2Salt] = newPbkdf2Salt
+            it[pbkdf2Iterations] = newPbkdf2Iterations
         }
     }
 
