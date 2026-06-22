@@ -679,7 +679,25 @@ fun Route.forumRoute()
         {
             val user = getForumUser() ?: return@post
             if (!requireForumAdmin(user)) return@post
+
+            // Defense in depth: require an explicit confirmation header so a
+            // CSRF-style or accidentally-triggered request cannot promote a user.
+            if (!call.request.header("X-Confirm-Action").equals("true", ignoreCase = true))
+                return@post call.respondApiError("Confirmation header required", HttpStatusCode.BadRequest)
+
             val req = call.receive<GrantInviteRequest>()
+
+            // Guard against self-targeting (admins are already admins, but an
+            // explicit no-op block makes intent clear and avoids noisy audit rows).
+            if (req.userId == user.id.value)
+                return@post call.respondApiError("Cannot modify own admin status", HttpStatusCode.BadRequest)
+
+            val target = usersDao.getUser(UserId(req.userId))
+                ?: return@post call.respondApiError("Target user not found", HttpStatusCode.NotFound)
+
+            // Audit trail — WARNING level so it surfaces in default log configs.
+            logger.warning("Forum admin promotion: actorId=${user.id.value} actor=${user.username} targetId=${req.userId} target=${target.username} action=set-admin")
+
             usersDao.setForumAdmin(UserId(req.userId), true)
             call.respondApi(Unit)
         }
@@ -753,6 +771,13 @@ fun Route.forumRoute()
             val normalizedMime = mimeType?.lowercase()?.trim()
             if (normalizedMime == null || normalizedMime !in allowedMimeTypes)
                 return@post call.respondApiError("Unsupported content type", HttpStatusCode.BadRequest)
+
+            // Defend against clients that lie via Content-Type: verify the actual
+            // magic bytes match the declared MIME. validateMagicBytes returns
+            // true for unknown types (e.g. image/avif) — those still passed the
+            // allowlist above, so they're allowed through this layer.
+            if (!FileUtils.validateMagicBytes(fileBytes, normalizedMime))
+                return@post call.respondApiError("File content does not match declared type", HttpStatusCode.BadRequest)
 
             val maxSize = if (attachmentType == "VIDEO") 100L * 1024 * 1024 else 10L * 1024 * 1024
             if (fileSize > maxSize) return@post call.respondApiError("File too large", HttpStatusCode.PayloadTooLarge)

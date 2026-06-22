@@ -5,6 +5,14 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
@@ -18,9 +26,11 @@ import moe.tachyon.shadowed.dataClass.UserId
 import moe.tachyon.shadowed.database.ChatMembers
 import moe.tachyon.shadowed.database.Chats
 import moe.tachyon.shadowed.database.Messages
-import moe.tachyon.shadowed.database.Users
 import moe.tachyon.shadowed.logger.ShadowedLogger
 import moe.tachyon.shadowed.utils.FileUtils
+import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.io.SequenceInputStream
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
@@ -42,8 +52,82 @@ data class UploadTaskInfo(
 // 内存中的上传任务缓存
 private val uploadTasks = ConcurrentHashMap<String, UploadTaskInfo>()
 
+/**
+ * Eviction threshold for [uploadTasks], in milliseconds. Initialised from
+ * `upload.taskExpireHours` (default 24h) when [Route.fileRoute] is installed.
+ */
+private var uploadTaskExpireMs: Long = 24L * 60 * 60 * 1000
+
+private val uploadCleanupScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+private var uploadCleanupJob: Job? = null
+private const val UPLOAD_CLEANUP_INTERVAL_MS = 60L * 60 * 1000 // 1h
+
+/**
+ * Removes upload tasks whose [UploadTaskInfo.createdAt] is older than the
+ * configured `upload.taskExpireHours` threshold. Deletes both the in-memory
+ * entry and the on-disk chunk directory. Safe to call from any thread.
+ *
+ * Exposed publicly so a Main.kt startup hook or operational tooling can
+ * trigger an explicit sweep on demand; it is also invoked automatically on
+ * the [UPLOAD_CLEANUP_INTERVAL_MS] cadence by [startUploadCleanup].
+ */
+fun cleanupExpiredUploads()
+{
+    val now = System.currentTimeMillis()
+    val cutoff = now - uploadTaskExpireMs
+    val staleIds = uploadTasks.entries.asSequence()
+        .filter { it.value.createdAt < cutoff }
+        .map { it.key }
+        .toList()
+    for (id in staleIds)
+    {
+        val info = uploadTasks.remove(id) ?: continue
+        runCatching { FileUtils.getUploadDir(id).deleteRecursively() }
+            .onFailure { logger.warning("Failed to delete upload dir for $id: ${it.message}") }
+        logger.info("Evicted expired upload task $id (chat=${info.chatId}, user=${info.userId}, ageMs=${now - info.createdAt})")
+    }
+}
+
+/**
+ * Launches a background coroutine that periodically calls [cleanupExpiredUploads]
+ * to evict abandoned chunked uploads. Idempotent: subsequent calls are no-ops
+ * while a previous job is still active.
+ *
+ * This is started from inside [Route.fileRoute] rather than Main.kt to keep the
+ * upload subsystem self-contained. If Main.kt gains a centralised startup-hook
+ * registry later, this can move there.
+ */
+private fun startUploadCleanup(expireHours: Long)
+{
+    if (uploadCleanupJob?.isActive == true) return
+    uploadTaskExpireMs = expireHours.coerceAtLeast(1L) * 60L * 60 * 1000
+    uploadCleanupJob = uploadCleanupScope.launch {
+        logger.info("Upload cleanup task started: expireHours=$expireHours, sweepIntervalMs=$UPLOAD_CLEANUP_INTERVAL_MS")
+        while (isActive)
+        {
+            try
+            {
+                delay(UPLOAD_CLEANUP_INTERVAL_MS)
+                cleanupExpiredUploads()
+            }
+            catch (e: CancellationException)
+            {
+                throw e
+            }
+            catch (e: Exception)
+            {
+                logger.severe("Upload cleanup error: ${e.message}", e)
+            }
+        }
+    }
+}
+
 fun Route.fileRoute()
 {
+    // Launch the abandoned-upload eviction loop using the configured threshold.
+    val expireHours = environment.config.propertyOrNull("upload.taskExpireHours")?.getString()?.toLongOrNull() ?: 24L
+    startUploadCleanup(expireHours)
+
     // 获取文件大小限制
     fun getMaxSize(messageType: MessageType): Long
     {
@@ -73,12 +157,36 @@ fun Route.fileRoute()
             call.respondApiError("File size exceeds limit", HttpStatusCode.PayloadTooLarge)
             return@post
         }
-        val fileBase64 = call.receiveStream()
+        val rawStream = call.receiveStream()
         if (chat == null || messageType == null)
             return@post call.respondApiError("Missing chat or message type", HttpStatusCode.BadRequest)
         val userAuth = call.authenticateSession() ?: return@post call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
         if (!getKoin().get<ChatMembers>().isMember(chat, userAuth.id))
             return@post call.respondApiError("Not a chat member", HttpStatusCode.Forbidden)
+
+        // Server-side content sanity check for media types — defends against
+        // malicious uploads that lie via X-Message-Type / Content-Type.
+        val saveStream: InputStream = if (messageType == MessageType.IMAGE || messageType == MessageType.VIDEO)
+        {
+            val header = ByteArray(32)
+            var totalRead = 0
+            while (totalRead < header.size)
+            {
+                val n = rawStream.read(header, totalRead, header.size - totalRead)
+                if (n <= 0) break
+                totalRead += n
+            }
+            val headerBytes = if (totalRead > 0) header.copyOf(totalRead) else ByteArray(0)
+            val prefix = if (messageType == MessageType.IMAGE) "image/" else "video/"
+            if (!FileUtils.matchesAnySignature(headerBytes, setOf(prefix)))
+                return@post call.respondApiError("File content does not match declared type", HttpStatusCode.BadRequest)
+            SequenceInputStream(ByteArrayInputStream(headerBytes), rawStream)
+        }
+        else
+        {
+            rawStream
+        }
+
         val messages = getKoin().get<Messages>()
         val burnTime = getKoin().get<Chats>().getChat(chat)?.burnTime
         val messageId = messages.addChatMessage(
@@ -92,7 +200,7 @@ fun Route.fileRoute()
         getKoin().get<Chats>().updateTime(chat)
         getKoin().get<ChatMembers>().incrementUnread(chat, userAuth.id)
         getKoin().get<ChatMembers>().resetUnread(chat, userAuth.id)
-        FileUtils.saveChatFile(messageId, fileBase64)
+        FileUtils.saveChatFile(messageId, saveStream)
         call.respondApi(
             buildJsonObject()
             {
@@ -310,14 +418,9 @@ fun Route.fileRoute()
     get("/file/{messageId}")
     {
         val messageId = call.pathParameters["messageId"]?.toLongOrNull() ?: return@get call.respondApiError("Invalid message id", HttpStatusCode.BadRequest)
-        val username = call.request.header("X-Auth-User")
-        val passwordHash = call.request.header("X-Auth-Token")
-        if (username == null || passwordHash == null)
-            return@get call.respondApiError("Missing auth headers", HttpStatusCode.BadRequest)
-        val users = getKoin().get<Users>()
-        val userAuth = users.getUserByUsername(username)
-        if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            return@get call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
+        // Session-based auth (was: plaintext-password replay via X-Auth-Token, C-2)
+        val userAuth = call.authenticateSession()
+            ?: return@get call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
         val message = getKoin().get<Messages>().getMessage(messageId) ?: return@get call.respondApiError("Message not found", HttpStatusCode.NotFound)
         if (!getKoin().get<ChatMembers>().isMember(message.chatId, userAuth.id))
             return@get call.respondApiError("Not a chat member", HttpStatusCode.Forbidden)

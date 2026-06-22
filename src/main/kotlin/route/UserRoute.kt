@@ -29,24 +29,12 @@ fun Route.userRoute()
     {
         post("/avatar")
         {
-            // Simple auth check via headers
-            val username = call.request.header("X-Auth-User")
-            val passwordHash = call.request.header("X-Auth-Token") // Encrypted password hash
-
-            if (username == null || passwordHash == null)
-            {
-                call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
-                return@post
-            }
-
-            val users = getKoin().get<Users>()
-            val userAuth = users.getUserByUsername(username)
-
-            if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            {
-                call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
-                return@post
-            }
+            // Session-based auth (was: plaintext-password replay via X-Auth-Token, C-2)
+            val userAuth = call.authenticateSession()
+                ?: run {
+                    call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
+                    return@post
+                }
 
             // Process multipart
             val multipart = call.receiveMultipart()
@@ -142,6 +130,8 @@ fun Route.userRoute()
                     put("signature", user.signature)
                     put("isDonor", user.isDonor)
                     put("nickname", user.nickname)
+                    put("pbkdf2Salt", user.pbkdf2Salt)
+                    put("pbkdf2Iterations", user.pbkdf2Iterations)
                 }
                 call.respondApi(response)
             }
@@ -162,6 +152,8 @@ fun Route.userRoute()
                     put("signature", user.signature)
                     put("isDonor", user.isDonor)
                     put("nickname", user.nickname)
+                    put("pbkdf2Salt", user.pbkdf2Salt)
+                    put("pbkdf2Iterations", user.pbkdf2Iterations)
                 }
                 call.respondApi(response)
             }
@@ -186,24 +178,12 @@ fun Route.userRoute()
                 return@post
             }
 
-            // Simple auth check via headers
-            val username = call.request.header("X-Auth-User")
-            val passwordHash = call.request.header("X-Auth-Token")
-
-            if (username == null || passwordHash == null)
-            {
-                call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
-                return@post
-            }
-
-            val users = getKoin().get<Users>()
-            val userAuth = users.getUserByUsername(username)
-
-            if (userAuth == null || !verifyPassword(passwordHash, userAuth.password))
-            {
-                call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
-                return@post
-            }
+            // Session-based auth (was: plaintext-password replay via X-Auth-Token, C-2)
+            val userAuth = call.authenticateSession()
+                ?: run {
+                    call.respondApiError("Authentication required", HttpStatusCode.Unauthorized)
+                    return@post
+                }
 
             // Check if user is a member of this chat
             val chatMembers = getKoin().get<ChatMembers>()
